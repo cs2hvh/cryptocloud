@@ -223,8 +223,6 @@ export default function Wallet() {
               />
             </div>
 
-            </div>
-
             {walletAddress && (
               <div>
                 <Label className="text-white font-normal text-lg mb-3 block">Deposit Address</Label>

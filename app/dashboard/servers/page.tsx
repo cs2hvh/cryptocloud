@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { FaServer, FaSync, FaCopy } from 'react-icons/fa';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 
 const fadeInUp = {
@@ -35,27 +35,26 @@ export default function ServersPage() {
   const [cpuCores, setCpuCores] = useState(2);
   const [memoryGB, setMemoryGB] = useState(2);
   const [diskGB, setDiskGB] = useState(20);
-  const [ipPrimary, setIpPrimary] = useState<string | undefined>(undefined);
+  // IP will be auto-assigned server-side; no selection here
   const [sshPassword, setSshPassword] = useState('');
 
-  useEffect(() => {
-    let ignore = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/infra/options', { cache: 'no-store' });
-        const json = await res.json();
-        if (ignore) return;
-        setOptions({ locations: json.locations || [], os: json.os || [], ips: json.ips || [] });
-        setLocation(json.locations?.[0]?.id);
-        setIpPrimary(json.ips?.[0]?.ip);
-      } catch (e: any) {
-        setError(e?.message || 'Failed to load options');
-      } finally {
-        setLoading(false);
-      }
-    })();
-    return () => { ignore = true }
+  const loadOptions = useCallback(async () => {
+    try {
+      const res = await fetch('/api/infra/options', { cache: 'no-store' });
+      const json = await res.json();
+      setOptions({ locations: json.locations || [], os: json.os || [], ips: json.ips || [] });
+      setLocation((prev) => prev ?? json.locations?.[0]?.id);
+      // nothing to do for IPs here; kept for future display
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load options');
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadOptions();
+  }, [loadOptions]);
 
   // Load user's servers from Supabase
   const loadMyServers = async () => {
@@ -82,8 +81,8 @@ export default function ServersPage() {
   }, [user?.id]);
 
   const submitDisabled = useMemo(() => {
-    return submitLoading || !location || !ipPrimary || !sshPassword || !hostname;
-  }, [submitLoading, location, ipPrimary, sshPassword, hostname]);
+    return submitLoading || !location || !sshPassword || !hostname;
+  }, [submitLoading, location, sshPassword, hostname]);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,7 +92,7 @@ export default function ServersPage() {
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
-      const selected = options?.ips.find((i) => i.ip === ipPrimary);
+      // IP auto-assigned on server; no client-side selection
       const payload = {
         location,
         os,
@@ -101,8 +100,7 @@ export default function ServersPage() {
         cpuCores,
         memoryMB: memoryGB * 1024,
         diskGB,
-        ipPrimary,
-        mac: selected?.mac || undefined,
+        // ip and mac assigned on server
         sshPassword,
         ownerId: user?.id,
         ownerEmail: user?.email,
@@ -116,11 +114,17 @@ export default function ServersPage() {
         body: JSON.stringify(payload),
       });
       const json = await res.json();
+      if (res.status === 409) {
+        setError('No available IPs at the moment. Try again later.');
+        await loadOptions();
+        return;
+      }
       if (!res.ok || !json.ok) {
         throw new Error(json.error || 'Provisioning failed');
       }
       setResult(json);
       loadMyServers();
+      await loadOptions();
     } catch (e: any) {
       setError(e?.message || 'Provisioning failed');
     } finally {
@@ -149,7 +153,8 @@ export default function ServersPage() {
             <span>Launch New Server</span>
           </CardTitle>
           <CardDescription className="text-white/60">
-            Choose location, specs, and SSH password. We’ll clone an Ubuntu 24 template and configure networking automatically.
+            Choose location, specs, and SSH password. IP will be auto-assigned.
+            We’ll clone an Ubuntu 24 template and configure networking automatically.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -191,17 +196,8 @@ export default function ServersPage() {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-white">Primary IP</Label>
-                <Select value={ipPrimary} onValueChange={setIpPrimary}>
-                  <SelectTrigger className="bg-black text-white border-white/10">
-                    <SelectValue placeholder="Select IP" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-black text-white border-white/10">
-                    {options?.ips.map((ip) => (
-                      <SelectItem key={ip.id} value={ip.ip!}>{ip.ip}{ip.mac ? ` • ${ip.mac}` : ''}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label className="text-white">IP Assignment</Label>
+                <div className="text-white/70 text-sm">An available IP will be auto-assigned.</div>
               </div>
 
               <div className="space-y-2">
@@ -377,3 +373,4 @@ export default function ServersPage() {
     </motion.div>
   );
 }
+

@@ -152,8 +152,8 @@ export async function POST(req: NextRequest) {
 
   const hostname = body.hostname || `vm-${Date.now()}`;
   const sshPassword = body.sshPassword as string | undefined;
-  const ipPrimary = body.ipPrimary as string | undefined;
-  const macAddress = body.mac || process.env.PUBLIC_IP_1_MAC || process.env.PUBLIC_IP_2_MAC;
+  let ipPrimary = (body.ipPrimary as string | undefined) ?? undefined;
+  let macAddress = (body.mac as string | undefined) ?? undefined;
   const cpuCores = Number(body.cpuCores || 2);
   const memoryMB = Number(body.memoryMB || 2048);
   const diskGB = body.diskGB ? Number(body.diskGB) : undefined; // optional
@@ -162,10 +162,79 @@ export async function POST(req: NextRequest) {
 
   if (!node) return Response.json({ ok: false, error: "Missing node configuration (PROXMOX_NODE)" }, { status: 400 });
   if (!sshPassword) return Response.json({ ok: false, error: "sshPassword is required" }, { status: 400 });
-  if (!ipPrimary || !gateway) return Response.json({ ok: false, error: "ipPrimary or gateway missing" }, { status: 400 });
+
+  // Auto-assign next available IP from env pool if not provided
+  try {
+    const supabase = createServerSupabase(bearer);
+    const ipPool: Array<{ ip: string; mac: string | null }> = [];
+    if (process.env.PUBLIC_IP_1) ipPool.push({ ip: String(process.env.PUBLIC_IP_1), mac: process.env.PUBLIC_IP_1_MAC || null });
+    if (process.env.PUBLIC_IP_2) ipPool.push({ ip: String(process.env.PUBLIC_IP_2), mac: process.env.PUBLIC_IP_2_MAC || process.env.PUBLIC_IP_1_MAC || null });
+    // Future: add PUBLIC_IP_3..N if present
+    const { data } = await supabase.from('servers').select('ip');
+    const used = new Set<string>((data || []).map((r: any) => String(r.ip)));
+    const available = ipPool.filter((c) => c.ip && !used.has(String(c.ip)));
+    if (!ipPrimary) ipPrimary = available[0]?.ip;
+    if (!macAddress) {
+      const found = ipPool.find((c) => c.ip === ipPrimary);
+      macAddress = found?.mac || process.env.PUBLIC_IP_1_MAC || process.env.PUBLIC_IP_2_MAC || undefined;
+    }
+  } catch {}
+
+  if (!ipPrimary || !gateway) return Response.json({ ok: false, error: "No available IPs or gateway missing" }, { status: 409 });
   if (!macAddress) return Response.json({ ok: false, error: "MAC address required for routed IP" }, { status: 400 });
 
   const templateVmidFromEnv = process.env.PROXMOX_TEMPLATE_VMID; // preferred
+
+  // Reserve IP in DB before provisioning to avoid reuse
+  let reservationId: number | null = null;
+  let db = { saved: false as boolean, id: null as null | number, error: null as null | string };
+  try {
+    const supabase = createServerSupabase(bearer);
+    // Optional pre-check for clarity (unique index will still protect in race)
+    const { data: existing } = await supabase
+      .from('servers')
+      .select('id')
+      .eq('ip', ipPrimary)
+      .limit(1)
+      .maybeSingle();
+    if (existing) {
+      return Response.json({ ok: false, error: 'IP already in use' }, { status: 409 });
+    }
+    const { data: inserted, error: insertErr } = await supabase
+      .from('servers')
+      .insert({
+        // Use placeholder VMID to satisfy possible NOT NULL constraints
+        vmid: 0,
+        node,
+        name: hostname,
+        ip: ipPrimary,
+        os,
+        location: body.location,
+        cpu_cores: cpuCores,
+        memory_mb: memoryMB,
+        disk_gb: diskGB ?? null,
+        status: 'provisioning',
+        details: null,
+        owner_id: body.ownerId || null,
+        owner_email: body.ownerEmail || null,
+      })
+      .select('id')
+      .single();
+    if (insertErr) {
+      db.error = insertErr.message;
+      // If unique constraint exists, surface conflict
+      if (insertErr.message?.toLowerCase().includes('duplicate') || (insertErr as any).code === '23505') {
+        return Response.json({ ok: false, error: 'IP already in use' }, { status: 409 });
+      }
+      return Response.json({ ok: false, error: 'Failed to reserve IP', db }, { status: 500 });
+    }
+    reservationId = (inserted as any)?.id ?? null;
+    db.saved = true;
+    db.id = reservationId;
+  } catch (e: any) {
+    db.error = e?.message || String(e);
+    return Response.json({ ok: false, error: 'DB reservation failed', db }, { status: 500 });
+  }
 
   try {
     const auth = await proxmoxAuthCookie(apiBase, dispatcher);
@@ -220,6 +289,8 @@ export async function POST(req: NextRequest) {
         onboot: 1,
         ciuser: "ubuntu",
         cipassword: sshPassword,
+        // ensure cloud-init drive is attached so options take effect
+        ide2: `${storage}:cloudinit`,
         nameserver: nameservers,
         net0: `virtio=${macAddress},bridge=${bridge}`,
         ipconfig0: ipConfig0,
@@ -283,35 +354,32 @@ export async function POST(req: NextRequest) {
       ssh: { username: "ubuntu", port: 22 },
     } as const;
 
-    // Persist in Supabase (best-effort). Use service role when available, else user's token.
-    let db = { saved: false as boolean, id: null as null | number, error: null as null | string };
+    // Update reservation with final details (best-effort)
     try {
-      const supabase = createServerSupabase(bearer);
-      const insert = {
-        vmid: newid,
-        node,
-        name: hostname,
-        ip: ipPrimary,
-        os,
-        location: body.location,
-        cpu_cores: cpuCores,
-        memory_mb: memoryMB,
-        disk_gb: diskGB ?? null,
-        status: responsePayload.status,
-        details,
-        owner_id: body.ownerId || null,
-        owner_email: body.ownerEmail || null,
-      } as any;
-      const { data, error } = await supabase.from('servers').insert(insert).select('id').single();
-      db.saved = !error;
-      db.id = (data as any)?.id ?? null;
-      db.error = error?.message ?? null;
+      if (reservationId != null) {
+        const supabase = createServerSupabase(bearer);
+        const { error: updErr } = await supabase
+          .from('servers')
+          .update({ vmid: newid, status: responsePayload.status, details })
+          .eq('id', reservationId);
+        if (updErr) db.error = updErr.message; else db.saved = true;
+      }
     } catch (e: any) {
       db.error = e?.message || String(e);
     }
 
     return Response.json({ ...responsePayload, db });
   } catch (e: any) {
+    // On failure, mark reservation as failed
+    try {
+      if (reservationId != null) {
+        const supabase = createServerSupabase(bearer);
+        await supabase
+          .from('servers')
+          .update({ status: 'failed', details: { error: e?.message } as any })
+          .eq('id', reservationId);
+      }
+    } catch {}
     return Response.json({ ok: false, error: e?.message, errorDetails: serializeError(e) }, { status: 500 });
   }
 }

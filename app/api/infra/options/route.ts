@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
-
+import { createServerSupabase } from "@/lib/supabaseServer";
 export const dynamic = "force-dynamic";
+
+
 
 type Location = {
   id: string;
@@ -25,7 +27,7 @@ export async function GET(_req: NextRequest) {
     { id: "ubuntu-24", name: "Ubuntu 24.04 LTS" },
   ];
 
-  const ips = [
+  const ipsAll = [
     ...(process.env.PUBLIC_IP_1
       ? [
           {
@@ -46,6 +48,17 @@ export async function GET(_req: NextRequest) {
       : []),
   ];
 
+  // Filter out IPs already assigned to a server
+  let usedIps = new Set<string>();
+  try {
+    const supabase = createServerSupabase();
+    const { data, error } = await supabase.from("servers").select("ip");
+    if (!error && Array.isArray(data)) {
+      for (const row of data) if (row?.ip) usedIps.add(String(row.ip));
+    }
+  } catch {}
+
+  const ips = ipsAll.filter((i) => i.ip && !usedIps.has(String(i.ip)));
+
   return Response.json({ ok: true, locations, os, ips });
 }
-
