@@ -111,7 +111,7 @@ export default function SignUp() {
             <div className="space-y-4 max-w-md mx-auto lg:mx-0">
               <div className="flex items-center space-x-3 bg-white/5 rounded-xl p-4 backdrop-blur-sm">
                 <FaShieldAlt className="h-6 w-6 text-[#60A5FA]" />
-                <span className="text-gray-300">No KYC verification required</span>
+                <span className="text-gray-300">Fast, seamless onboarding</span>
               </div>
               <div className="flex items-center space-x-3 bg-white/5 rounded-xl p-4 backdrop-blur-sm">
                 <FaRocket className="h-6 w-6 text-[#60A5FA]" />

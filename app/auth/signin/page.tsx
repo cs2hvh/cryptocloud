@@ -96,7 +96,7 @@ export default function SignIn() {
             <div className="grid grid-cols-3 gap-6 max-w-md mx-auto lg:mx-0">
               <div className="text-center">
                 <FaShieldAlt className="h-8 w-8 text-[#60A5FA] mx-auto mb-2" />
-                <p className="text-sm text-gray-400">No KYC</p>
+                <p className="text-sm text-gray-400">Private</p>
               </div>
               <div className="text-center">
                 <FaLock className="h-8 w-8 text-[#60A5FA] mx-auto mb-2" />
