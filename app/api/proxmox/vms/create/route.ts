@@ -18,23 +18,35 @@ function serializeError(err: unknown) {
 function withTimeout<T>(p: Promise<T>, ms = 60000): Promise<T> {
   return new Promise((resolve, reject) => {
     const id = setTimeout(() => reject(new Error("Request timed out")), ms);
-    p.then((v) => {
-      clearTimeout(id);
-      resolve(v);
-    }).catch((e) => {
-      clearTimeout(id);
-      reject(e);
-    });
+    p.then((v) => { clearTimeout(id); resolve(v); })
+     .catch((e) => { clearTimeout(id); reject(e); });
   });
 }
 
-async function proxmoxAuthCookie(apiBase: string, dispatcher?: any) {
-  const tokenId = process.env.PROXMOX_TOKEN_ID;
-  const tokenSecret = process.env.PROXMOX_TOKEN_SECRET;
-  const username = process.env.PROXMOX_USERNAME;
-  const password = process.env.PROXMOX_PASSWORD;
+type HostConfig = {
+  id: string;
+  name: string;
+  host_url: string;
+  allow_insecure_tls: boolean;
+  token_id: string | null;
+  token_secret: string | null;
+  username: string | null;
+  password: string | null;
+  node: string;
+  storage: string;
+  bridge: string;
+  template_vmid: number | null;
+  gateway_ip: string | null;
+  dns_primary: string | null;
+  dns_secondary: string | null;
+};
 
-  // Try token first if present, verify with a lightweight API call
+async function proxmoxAuthCookie(apiBase: string, dispatcher: any, host: HostConfig) {
+  const tokenId = host.token_id || undefined;
+  const tokenSecret = host.token_secret || undefined;
+  const username = host.username || undefined;
+  const password = host.password || undefined;
+
   if (tokenId && tokenSecret) {
     const tokenAuth = { headers: { Authorization: `PVEAPIToken=${tokenId}=${tokenSecret}` } as HeadersInit };
     try {
@@ -48,13 +60,10 @@ async function proxmoxAuthCookie(apiBase: string, dispatcher?: any) {
         })
       );
       if (verify.ok) return tokenAuth;
-      // fallthrough to password on non-OK (e.g., 401)
-    } catch {
-      // fallthrough to password
-    }
+    } catch {}
   }
 
-  if (!username || !password) throw new Error("Missing PROXMOX_USERNAME or PROXMOX_PASSWORD");
+  if (!username || !password) throw new Error("Missing Proxmox credentials in DB");
 
   const body = new URLSearchParams({ username, password });
   const ticketRes = await withTimeout(
@@ -131,145 +140,172 @@ async function waitTask(apiBase: string, node: string, upid: string, auth: Reque
 }
 
 export async function POST(req: NextRequest) {
-  const host = process.env.PROXMOX_HOST?.replace(/\/$/, "");
-  if (!host) return Response.json({ ok: false, error: "PROXMOX_HOST not configured" }, { status: 500 });
-
-  const allowInsecure = process.env.PROXMOX_ALLOW_INSECURE_TLS === "true";
-  const dispatcher = allowInsecure ? new UndiciAgent({ connect: { rejectUnauthorized: false } }) : undefined;
-  const apiBase = host.startsWith("http:") ? host.replace(/^http:/, "https:") : host;
-
   const body = (await req.json().catch(() => ({}))) as any;
-  const authHeader = req.headers.get('authorization') || '';
-  const bearer = authHeader.toLowerCase().startsWith('bearer ')
-    ? authHeader.slice(7)
-    : undefined;
-  const node = process.env.PROXMOX_NODE || body.node;
-  const storage = process.env.PROXMOX_STORAGE || body.storage || "local";
-  const bridge = process.env.PROXMOX_BRIDGE || body.bridge || "vmbr0";
-  const gateway = process.env.GATEWAY_IP;
-  const dns1 = process.env.DNS_PRIMARY || "8.8.8.8";
-  const dns2 = process.env.DNS_SECONDARY || "1.1.1.1";
+  const authHeader = req.headers.get("authorization") || "";
+  const bearer = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7) : undefined;
+
+  const hostId = String(body.location || "");
+  if (!hostId) return Response.json({ ok: false, error: "location (hostId) required" }, { status: 400 });
+
+  const supabase = createServerSupabase(bearer);
+  const { data: host, error: hostErr } = await supabase
+    .from("proxmox_hosts")
+    .select("*")
+    .eq("id", hostId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (hostErr) return Response.json({ ok: false, error: hostErr.message }, { status: 500 });
+  if (!host) return Response.json({ ok: false, error: "Host not found or inactive" }, { status: 404 });
+
+  const cfg = host as HostConfig;
+
+  const allowInsecure = !!cfg.allow_insecure_tls;
+  const dispatcher = allowInsecure ? new UndiciAgent({ connect: { rejectUnauthorized: false } }) : undefined;
+  const apiBase = cfg.host_url.startsWith("http:") ? cfg.host_url.replace(/^http:/, "https:") : cfg.host_url;
 
   const hostname = body.hostname || `vm-${Date.now()}`;
   const sshPassword = body.sshPassword as string | undefined;
-  let ipPrimary = (body.ipPrimary as string | undefined) ?? undefined;
-  let macAddress = (body.mac as string | undefined) ?? undefined;
   const cpuCores = Number(body.cpuCores || 2);
   const memoryMB = Number(body.memoryMB || 2048);
-  const diskGB = body.diskGB ? Number(body.diskGB) : undefined; // optional
+  const diskGB = body.diskGB ? Number(body.diskGB) : undefined;
+  const os = body.os || cfg.template_os || "Ubuntu 24.04 LTS";
 
-  const os = body.os || "ubuntu-24";
-
-  if (!node) return Response.json({ ok: false, error: "Missing node configuration (PROXMOX_NODE)" }, { status: 400 });
   if (!sshPassword) return Response.json({ ok: false, error: "sshPassword is required" }, { status: 400 });
 
-  // Auto-assign next available IP from env pool if not provided
+  // IP auto-assign from DB pools if not provided
+  let ipPrimary: string | undefined = body.ipPrimary ? String(body.ipPrimary) : undefined;
+  let macAddress: string | undefined = body.mac ? String(body.mac) : undefined;
+
   try {
-    const supabase = createServerSupabase(bearer);
-    const ipPool: Array<{ ip: string; mac: string | null }> = [];
-    if (process.env.PUBLIC_IP_1) ipPool.push({ ip: String(process.env.PUBLIC_IP_1), mac: process.env.PUBLIC_IP_1_MAC || null });
-    if (process.env.PUBLIC_IP_2) ipPool.push({ ip: String(process.env.PUBLIC_IP_2), mac: process.env.PUBLIC_IP_2_MAC || process.env.PUBLIC_IP_1_MAC || null });
-    // Future: add PUBLIC_IP_3..N if present
-    const { data } = await supabase.from('servers').select('ip');
-    const used = new Set<string>((data || []).map((r: any) => String(r.ip)));
-    const available = ipPool.filter((c) => c.ip && !used.has(String(c.ip)));
-    if (!ipPrimary) ipPrimary = available[0]?.ip;
-    if (!macAddress) {
-      const found = ipPool.find((c) => c.ip === ipPrimary);
-      macAddress = found?.mac || process.env.PUBLIC_IP_1_MAC || process.env.PUBLIC_IP_2_MAC || undefined;
+    const { data: usedRows } = await supabase.from("servers").select("ip");
+    const usedSet = new Set<string>((usedRows || []).map((r: any) => String(r.ip)));
+
+    const { data: pools } = await supabase
+      .from("public_ip_pools")
+      .select("id, mac")
+      .eq("host_id", cfg.id);
+    const poolIds = (pools || []).map((p: any) => Number(p.id));
+    const macByPool = new Map<number, string | undefined>((pools || []).map((p: any) => [Number(p.id), p.mac as string | undefined]));
+
+    let candidates: Array<{ ip: string; mac?: string; poolId: number }> = [];
+    if (poolIds.length > 0) {
+      const { data: ipRows } = await supabase
+        .from("public_ip_pool_ips")
+        .select("pool_id, ip")
+        .in("pool_id", poolIds);
+      for (const r of ipRows || []) {
+        const poolId = Number((r as any).pool_id);
+        const ip = String((r as any).ip);
+        const mac = macByPool.get(poolId);
+        if (!usedSet.has(ip)) candidates.push({ ip, mac, poolId });
+      }
+    }
+
+    if (!ipPrimary) ipPrimary = candidates[0]?.ip;
+    if (!macAddress && ipPrimary) {
+      const found = candidates.find((x) => x.ip === ipPrimary);
+      macAddress = found?.mac;
     }
   } catch {}
+
+  const gateway = cfg.gateway_ip || undefined;
+  const dns1 = cfg.dns_primary || "8.8.8.8";
+  const dns2 = cfg.dns_secondary || "1.1.1.1";
 
   if (!ipPrimary || !gateway) return Response.json({ ok: false, error: "No available IPs or gateway missing" }, { status: 409 });
   if (!macAddress) return Response.json({ ok: false, error: "MAC address required for routed IP" }, { status: 400 });
 
-  const templateVmidFromEnv = process.env.PROXMOX_TEMPLATE_VMID; // preferred
+  const node = cfg.node;
+  const storage = cfg.storage || "local";
+  const bridge = cfg.bridge || "vmbr0";
+  const templateVmidFromDb = cfg.template_vmid || undefined;
 
-  // Reserve IP in DB before provisioning to avoid reuse
+  // Reserve DB record to avoid reuse
   let reservationId: number | null = null;
   let db = { saved: false as boolean, id: null as null | number, error: null as null | string };
+
   try {
-    const supabase = createServerSupabase(bearer);
-    // Optional pre-check for clarity (unique index will still protect in race)
     const { data: existing } = await supabase
-      .from('servers')
-      .select('id')
-      .eq('ip', ipPrimary)
+      .from("servers")
+      .select("id")
+      .eq("ip", ipPrimary)
       .limit(1)
       .maybeSingle();
-    if (existing) {
-      return Response.json({ ok: false, error: 'IP already in use' }, { status: 409 });
-    }
+    if (existing) return Response.json({ ok: false, error: "IP already in use" }, { status: 409 });
+
     const { data: inserted, error: insertErr } = await supabase
-      .from('servers')
+      .from("servers")
       .insert({
-        // Use placeholder VMID to satisfy possible NOT NULL constraints
         vmid: 0,
         node,
         name: hostname,
         ip: ipPrimary,
         os,
-        location: body.location,
+        location: hostId,
         cpu_cores: cpuCores,
         memory_mb: memoryMB,
         disk_gb: diskGB ?? null,
-        status: 'provisioning',
+        status: "provisioning",
         details: null,
         owner_id: body.ownerId || null,
         owner_email: body.ownerEmail || null,
       })
-      .select('id')
+      .select("id")
       .single();
     if (insertErr) {
       db.error = insertErr.message;
-      // If unique constraint exists, surface conflict
-      if (insertErr.message?.toLowerCase().includes('duplicate') || (insertErr as any).code === '23505') {
-        return Response.json({ ok: false, error: 'IP already in use' }, { status: 409 });
+      if (insertErr.message?.toLowerCase().includes("duplicate") || (insertErr as any).code === "23505") {
+        return Response.json({ ok: false, error: "IP already in use" }, { status: 409 });
       }
-      return Response.json({ ok: false, error: 'Failed to reserve IP', db }, { status: 500 });
+      return Response.json({ ok: false, error: "Failed to reserve IP", db }, { status: 500 });
     }
     reservationId = (inserted as any)?.id ?? null;
     db.saved = true;
     db.id = reservationId;
   } catch (e: any) {
     db.error = e?.message || String(e);
-    return Response.json({ ok: false, error: 'DB reservation failed', db }, { status: 500 });
+    return Response.json({ ok: false, error: "DB reservation failed", db }, { status: 500 });
   }
 
   try {
-    const auth = await proxmoxAuthCookie(apiBase, dispatcher);
+    const auth = await proxmoxAuthCookie(apiBase, dispatcher, cfg);
 
-    // Resolve template vmid
-    let templateVmid = templateVmidFromEnv ? Number(templateVmidFromEnv) : undefined;
+    // Resolve template vmid (priority: explicit template id in DB via OS name, then host default, then guess)
+    let templateVmid = templateVmidFromDb ? Number(templateVmidFromDb) : undefined;
+    try {
+      // Try find matching template for this host by name (case-insensitive)
+      const { data: t } = await supabase
+        .from('proxmox_templates')
+        .select('vmid, name, is_active')
+        .eq('host_id', cfg.id)
+        .ilike('name', os)
+        .maybeSingle();
+      if (t && (t as any).is_active !== false) {
+        const vmid = Number((t as any).vmid);
+        if (!Number.isNaN(vmid)) templateVmid = vmid;
+      }
+    } catch {}
     if (!templateVmid) {
-      // Try to find a template that looks like Ubuntu 24 on the node
+      // Fallback guessing
       const listJson = await fetchJson(apiBase, `/api2/json/nodes/${encodeURIComponent(node)}/qemu`, auth, dispatcher);
       const vms = ((listJson as any)?.data ?? listJson) as any[];
       const guess = vms.find((v) => String(v?.name || "").toLowerCase().includes("ubuntu") && String(v?.name || "").includes("24"));
       if (guess?.vmid) templateVmid = Number(guess.vmid);
     }
     if (!templateVmid) {
-      return Response.json(
-        { ok: false, error: "Set PROXMOX_TEMPLATE_VMID to your Ubuntu 24 template VMID" },
-        { status: 400 }
-      );
+      return Response.json({ ok: false, error: "Set template_vmid for host or ensure an Ubuntu 24 template exists" }, { status: 400 });
     }
 
-    // Get next available VMID
+    // Next VMID
     const nextIdJson = await fetchJson(apiBase, "/api2/json/cluster/nextid", auth, dispatcher);
     const newid = Number(((nextIdJson as any)?.data ?? nextIdJson) as string);
 
-    // Clone template
+    // Clone
     const cloneRes = await postForm(
       apiBase,
       `/api2/json/nodes/${encodeURIComponent(node)}/qemu/${templateVmid}/clone`,
-      {
-        newid,
-        name: hostname,
-        full: 1,
-        target: node,
-        storage,
-      },
+      { newid, name: hostname, full: 1, target: node, storage },
       auth,
       dispatcher
     );
@@ -277,7 +313,7 @@ export async function POST(req: NextRequest) {
     if (!upid) throw new Error("clone did not return task id");
     await waitTask(apiBase, node, upid, auth, dispatcher);
 
-    // Configure VM (cloud-init, network, CPU/RAM)
+    // Configure
     const ipConfig0 = `ip=${ipPrimary}/32,gw=${gateway}`;
     const nameservers = `${dns1}${dns2 ? ` ${dns2}` : ""}`;
     await postForm(
@@ -289,7 +325,6 @@ export async function POST(req: NextRequest) {
         onboot: 1,
         ciuser: "ubuntu",
         cipassword: sshPassword,
-        // ensure cloud-init drive is attached so options take effect
         ide2: `${storage}:cloudinit`,
         nameserver: nameservers,
         net0: `virtio=${macAddress},bridge=${bridge}`,
@@ -299,25 +334,18 @@ export async function POST(req: NextRequest) {
       dispatcher
     );
 
-    // Optional disk resize
     if (diskGB && diskGB > 0) {
       try {
         await postForm(
           apiBase,
           `/api2/json/nodes/${encodeURIComponent(node)}/qemu/${newid}/resize`,
-          {
-            disk: "scsi0",
-            size: `+${diskGB}G`,
-          } as any,
+          { disk: "scsi0", size: `+${diskGB}G` } as any,
           auth,
           dispatcher
         );
-      } catch (e) {
-        // ignore resize errors for now (template may already be larger)
-      }
+      } catch {}
     }
 
-    // Start VM
     const startRes = await postForm(
       apiBase,
       `/api2/json/nodes/${encodeURIComponent(node)}/qemu/${newid}/status/start`,
@@ -328,15 +356,9 @@ export async function POST(req: NextRequest) {
     const startUpid = (startRes as any)?.data;
     if (startUpid) await waitTask(apiBase, node, startUpid, auth, dispatcher, 60000).catch(() => {});
 
-    // Fetch current status/details
     let details: any = null;
     try {
-      const cur = await fetchJson(
-        apiBase,
-        `/api2/json/nodes/${encodeURIComponent(node)}/qemu/${newid}/status/current`,
-        auth,
-        dispatcher
-      );
+      const cur = await fetchJson(apiBase, `/api2/json/nodes/${encodeURIComponent(node)}/qemu/${newid}/status/current`, auth, dispatcher);
       details = (cur as any)?.data ?? cur;
     } catch {}
 
@@ -347,21 +369,19 @@ export async function POST(req: NextRequest) {
       name: hostname,
       ip: ipPrimary,
       os,
-      location: body.location,
+      location: hostId,
       specs: { cpuCores, memoryMB, diskGB },
       status: details?.status || "starting",
       details,
       ssh: { username: "ubuntu", port: 22 },
     } as const;
 
-    // Update reservation with final details (best-effort)
     try {
       if (reservationId != null) {
-        const supabase = createServerSupabase(bearer);
         const { error: updErr } = await supabase
-          .from('servers')
+          .from("servers")
           .update({ vmid: newid, status: responsePayload.status, details })
-          .eq('id', reservationId);
+          .eq("id", reservationId);
         if (updErr) db.error = updErr.message; else db.saved = true;
       }
     } catch (e: any) {
@@ -370,14 +390,12 @@ export async function POST(req: NextRequest) {
 
     return Response.json({ ...responsePayload, db });
   } catch (e: any) {
-    // On failure, mark reservation as failed
     try {
       if (reservationId != null) {
-        const supabase = createServerSupabase(bearer);
         await supabase
-          .from('servers')
-          .update({ status: 'failed', details: { error: e?.message } as any })
-          .eq('id', reservationId);
+          .from("servers")
+          .update({ status: "failed", details: { error: e?.message } as any })
+          .eq("id", reservationId);
       }
     } catch {}
     return Response.json({ ok: false, error: e?.message, errorDetails: serializeError(e) }, { status: 500 });

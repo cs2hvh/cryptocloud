@@ -13,7 +13,8 @@ import {
   FaSignOutAlt,
   FaUser,
   FaBars,
-  FaTimes
+  FaTimes,
+  FaUserShield,
 } from 'react-icons/fa';
 
 const sidebarItems = [
@@ -21,6 +22,7 @@ const sidebarItems = [
   { name: 'Servers', href: '/dashboard/servers', icon: FaServer },
   { name: 'Analytics', href: '/dashboard/analytics', icon: FaChartBar },
   { name: 'Settings', href: '/dashboard/settings', icon: FaCog },
+  { name: 'Admin', href: '/dashboard/admin', icon: FaUserShield },
 ];
 
 export default function DashboardLayout({
@@ -96,8 +98,8 @@ export default function DashboardLayout({
       {/* Main Content */}
       <div className="lg:ml-64">
         {/* Top Bar */}
-        <header className="fixed top-0 left-0 right-0 z-50 bg-black border-b border-white/10 lg:left-64">
-          <div className="flex items-center justify-between p-4">
+        <header className="sticky top-0 z-50 bg-black border-b border-white/10 h-16">
+          <div className="flex h-full items-center justify-between px-4">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="lg:hidden text-white hover:text-white/80 transition-colors"
@@ -114,7 +116,7 @@ export default function DashboardLayout({
         </header>
 
         {/* Page Content */}
-        <main className="pt-16 p-4 lg:p-6 bg-black min-h-screen">
+        <main className="pt-4 p-4 lg:p-6 bg-black min-h-screen">
           {children}
         </main>
       </div>
