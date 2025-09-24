@@ -130,35 +130,35 @@ export default function Wallet() {
       {/* Wallet Overview */}
       <motion.div variants={fadeInUp}>
         <h1 className="text-2xl font-medium text-white mb-6">Wallet Management</h1>
-        <Card className="bg-gray-900 border-gray-800">
+        <Card className="bg-white/5 border-white/10 backdrop-blur-sm">
           <CardContent className="p-8">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div>
                 <h2 className="text-xl font-medium text-white mb-4">Account Balance</h2>
-                <div className="bg-black border border-gray-700 p-6">
+                <div className="bg-white/5 border border-white/10 p-6 rounded-xl">
                   <div className="flex items-center justify-between mb-4">
-                    <span className="text-gray-400">Available Balance</span>
+                    <span className="text-white/60">Available Balance</span>
                     <span className="text-3xl font-medium text-white">${balance.toFixed(2)}</span>
                   </div>
-                  <div className="text-gray-500 text-sm">USD Equivalent</div>
+                  <div className="text-white/50 text-sm">USD Equivalent</div>
                 </div>
               </div>
               
               <div className="grid grid-cols-3 gap-4">
-                <div className="bg-black border border-gray-700 p-4 text-center">
-                  <FaDollarSign className="h-6 w-6 text-green-400 mx-auto mb-2" />
+                <div className="bg-white/5 border border-white/10 p-4 text-center rounded-xl">
+                  <FaDollarSign className="h-6 w-6 text-white mx-auto mb-2" />
                   <p className="text-lg font-medium text-white">${balance.toFixed(2)}</p>
-                  <p className="text-gray-400 text-xs">Available</p>
+                  <p className="text-white/60 text-xs">Available</p>
                 </div>
-                <div className="bg-black border border-gray-700 p-4 text-center">
-                  <FaBolt className="h-6 w-6 text-yellow-400 mx-auto mb-2" />
+                <div className="bg-white/5 border border-white/10 p-4 text-center rounded-xl">
+                  <FaBolt className="h-6 w-6 text-white mx-auto mb-2" />
                   <p className="text-lg font-medium text-white">$0.00</p>
-                  <p className="text-gray-400 text-xs">Reserved</p>
+                  <p className="text-white/60 text-xs">Reserved</p>
                 </div>
-                <div className="bg-black border border-gray-700 p-4 text-center">
-                  <FaHistory className="h-6 w-6 text-blue-400 mx-auto mb-2" />
+                <div className="bg-white/5 border border-white/10 p-4 text-center rounded-xl">
+                  <FaHistory className="h-6 w-6 text-white mx-auto mb-2" />
                   <p className="text-lg font-medium text-white">{transactions.length}</p>
-                  <p className="text-gray-400 text-xs">Transactions</p>
+                  <p className="text-white/60 text-xs">Transactions</p>
                 </div>
               </div>
             </div>
@@ -169,13 +169,13 @@ export default function Wallet() {
       {/* Deposit and History */}
       <motion.div variants={fadeInUp} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Deposit Section */}
-        <Card className="bg-gray-900 border-gray-800">
-          <CardHeader className="border-b border-gray-800">
+        <Card className="bg-white/5 border-white/10 backdrop-blur-sm">
+          <CardHeader className="border-b border-white/10">
             <CardTitle className="text-white text-xl font-medium flex items-center space-x-3">
               <FaPlus className="h-5 w-5" />
               <span>Add Funds</span>
             </CardTitle>
-            <CardDescription className="text-gray-400">
+            <CardDescription className="text-white/60">
               Deposit cryptocurrency to your wallet
             </CardDescription>
           </CardHeader>
@@ -186,23 +186,23 @@ export default function Wallet() {
                 setSelectedCurrency(value);
                 setWalletAddress(generateWalletAddress(value));
               }}>
-                <SelectTrigger className="bg-black border-gray-700 text-white h-10">
+                <SelectTrigger className="bg-white/5 border-white/10 text-white h-10">
                   <SelectValue placeholder="Select cryptocurrency" />
                 </SelectTrigger>
-                <SelectContent className="bg-gray-900 border-gray-700">
-                  <SelectItem value="btc" className="text-white hover:bg-gray-800">
+                <SelectContent className="bg-black/90 border-white/10">
+                  <SelectItem value="btc" className="text-white hover:bg-white/10">
                     <div className="flex items-center space-x-2">
                       <FaBitcoin className="h-4 w-4 text-orange-400" />
                       <span>Bitcoin (BTC)</span>
                     </div>
                   </SelectItem>
-                  <SelectItem value="eth" className="text-white hover:bg-gray-800">
+                  <SelectItem value="eth" className="text-white hover:bg-white/10">
                     <div className="flex items-center space-x-2">
                       <FaEthereum className="h-4 w-4 text-blue-400" />
                       <span>Ethereum (ETH)</span>
                     </div>
                   </SelectItem>
-                  <SelectItem value="xmr" className="text-white hover:bg-gray-800">
+                  <SelectItem value="xmr" className="text-white hover:bg-white/10">
                     <div className="flex items-center space-x-2">
                       <FaCoins className="h-4 w-4 text-orange-500" />
                       <span>Monero (XMR)</span>
@@ -219,32 +219,32 @@ export default function Wallet() {
                 placeholder="100.00"
                 value={depositAmount}
                 onChange={(e) => setDepositAmount(e.target.value)}
-                className="bg-black border-gray-700 text-white h-10"
+                className="bg-white/5 border-white/10 text-white h-10"
               />
             </div>
 
             {walletAddress && (
               <div>
                 <Label className="text-white font-normal text-lg mb-3 block">Deposit Address</Label>
-                <div className="bg-black/50 border border-gray-700 rounded-xl p-4">
+                <div className="bg-white/5 border border-white/10 rounded-xl p-4">
                   <div className="flex items-center justify-between">
-                    <code className="text-green-400 text-sm break-all flex-1 mr-2">{walletAddress}</code>
+                    <code className="text-[#3B82F6] text-sm break-all flex-1 mr-2">{walletAddress}</code>
                     <button
                       onClick={() => copyToClipboard(walletAddress)}
-                      className="text-gray-400 hover:text-white transition-colors"
+                      className="text-white/60 hover:text-white transition-colors"
                     >
                       <FaCopy className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
-                <p className="text-gray-500 text-sm mt-2">Send {selectedCurrency.toUpperCase()} to this address</p>
+                <p className="text-white/60 text-sm mt-2">Send {selectedCurrency.toUpperCase()} to this address</p>
               </div>
             )}
 
             <Button
               onClick={handleDeposit}
               disabled={isLoading || !depositAmount || !selectedCurrency}
-              className="w-full bg-gradient-to-r from-[#60A5FA] to-[#3B82F6] hover:from-[#3B82F6] hover:to-[#1D4ED8] text-white font-normal h-12 rounded-xl"
+              className="w-full bg-gradient-to-r from-[#3B82F6] to-[#1D4ED8] hover:from-[#2563EB] hover:to-[#1E40AF] text-white font-medium h-12 rounded-xl"
             >
               {isLoading ? 'Processing...' : 'Confirm Deposit'}
             </Button>
@@ -255,15 +255,15 @@ export default function Wallet() {
         <Card className="bg-white/5 border-white/10 backdrop-blur-sm">
           <CardHeader>
             <CardTitle className="text-white text-2xl font-normal flex items-center space-x-3">
-              <FaHistory className="h-6 w-6 text-[#60A5FA]" />
+              <FaHistory className="h-6 w-6 text-white" />
               <span>Recent Transactions</span>
             </CardTitle>
           </CardHeader>
           <CardContent>
             {transactions.length === 0 ? (
               <div className="text-center py-8">
-                <FaHistory className="h-12 w-12 text-gray-600 mx-auto mb-4" />
-                <p className="text-gray-400">No transactions yet</p>
+                <FaHistory className="h-12 w-12 text-white/30 mx-auto mb-4" />
+                <p className="text-white/60">No transactions yet</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -280,7 +280,7 @@ export default function Wallet() {
                       </div>
                       <div>
                         <p className="text-white font-normal">{transaction.description}</p>
-                        <p className="text-gray-400 text-sm">
+                        <p className="text-white/60 text-sm">
                           {new Date(transaction.timestamp).toLocaleDateString()}
                         </p>
                       </div>
@@ -292,9 +292,9 @@ export default function Wallet() {
                         {transaction.type === 'deposit' ? '+' : '-'}${transaction.amount.toFixed(2)}
                       </p>
                       <Badge variant="secondary" className={`${
-                        transaction.status === 'completed' ? 'bg-green-500/20 text-green-400' :
-                        transaction.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400' :
-                        'bg-red-500/20 text-red-400'
+                        transaction.status === 'completed' ? 'bg-white/10 text-white' :
+                        transaction.status === 'pending' ? 'bg-white/10 text-white' :
+                        'bg-white/10 text-white'
                       }`}>
                         {transaction.status}
                       </Badge>

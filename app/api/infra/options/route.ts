@@ -9,7 +9,7 @@ export async function GET(_req: NextRequest) {
 
   const { data: hosts, error: hostsErr } = await supabase
     .from("proxmox_hosts")
-    .select("id,name,host_url,is_active")
+    .select("id,name,host_url,location,is_active")
     .eq("is_active", true)
     .order("created_at", { ascending: false });
 
@@ -21,7 +21,8 @@ export async function GET(_req: NextRequest) {
     id: h.id,
     name: h.name || h.host_url || h.id,
     host: h.host_url,
-  }));
+    location: h.location || null,
+  } as any));
 
   // Build OS list from templates across active hosts (unique by name)
   let os: Array<{ id: string; name: string }> = [];

@@ -1,10 +1,8 @@
 "use client";
 
-import { useRef } from "react";
-import { motion } from "motion/react";
+import { useRef, useState } from "react";
+import { motion } from "framer-motion";
 import DottedMap from "dotted-map";
-
-import { useTheme } from "next-themes";
 
 interface MapProps {
   dots?: Array<{
@@ -12,22 +10,26 @@ interface MapProps {
     end: { lat: number; lng: number; label?: string };
   }>;
   lineColor?: string;
+  hideEndDots?: boolean;
+  hideLines?: boolean;
 }
 
 export function WorldMap({
   dots = [],
-  lineColor = "#0ea5e9",
+  lineColor = "#60A5FA",
+  hideEndDots = false,
+  hideLines = false,
 }: MapProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const map = new DottedMap({ height: 100, grid: "diagonal" });
+  const [hover, setHover] = useState<{ label: string; x: number; y: number } | null>(null);
 
-  const { theme } = useTheme();
-
+  // Project uses dark theme only; keep map consistently dark
   const svgMap = map.getSVG({
-    radius: 0.22,
-    color: theme === "dark" ? "#FFFFFF40" : "#00000040",
+    radius: 0.25,
+    color: "#FFFFFF2A",
     shape: "circle",
-    backgroundColor: theme === "dark" ? "black" : "white",
+    backgroundColor: "black",
   });
 
   const projectPoint = (lat: number, lng: number) => {
@@ -46,7 +48,7 @@ export function WorldMap({
   };
 
   return (
-    <div className="w-full aspect-[2/1] dark:bg-black bg-white rounded-lg  relative font-sans">
+    <div className="w-full aspect-[2/1] bg-black rounded-lg relative font-sans">
       <img
         src={`data:image/svg+xml;utf8,${encodeURIComponent(svgMap)}`}
         className="h-full w-full [mask-image:linear-gradient(to_bottom,transparent,white_10%,white_90%,transparent)] pointer-events-none select-none"
@@ -58,9 +60,9 @@ export function WorldMap({
       <svg
         ref={svgRef}
         viewBox="0 0 800 400"
-        className="w-full h-full absolute inset-0 pointer-events-none select-none"
+        className="w-full h-full absolute inset-0 select-none"
       >
-        {dots.map((dot, i) => {
+        {!hideLines && dots.map((dot, i) => {
           const startPoint = projectPoint(dot.start.lat, dot.start.lng);
           const endPoint = projectPoint(dot.end.lat, dot.end.lng);
           return (
@@ -70,19 +72,11 @@ export function WorldMap({
                 fill="none"
                 stroke="url(#path-gradient)"
                 strokeWidth="1"
-                initial={{
-                  pathLength: 0,
-                }}
-                animate={{
-                  pathLength: 1,
-                }}
-                transition={{
-                  duration: 1,
-                  delay: 0.5 * i,
-                  ease: "easeOut",
-                }}
-                key={`start-upper-${i}`}
-              ></motion.path>
+                initial={{ pathLength: 0 }}
+                animate={{ pathLength: 1 }}
+                transition={{ duration: 0.6, delay: 0.25 * i, ease: "easeOut" }}
+                key={`path-${i}`}
+              />
             </g>
           );
         })}
@@ -104,14 +98,31 @@ export function WorldMap({
                 cy={projectPoint(dot.start.lat, dot.start.lng).y}
                 r="2"
                 fill={lineColor}
-              />
+                className="cursor-pointer"
+                onMouseEnter={() => setHover({
+                  label: dot.start.label || "",
+                  x: projectPoint(dot.start.lat, dot.start.lng).x,
+                  y: projectPoint(dot.start.lat, dot.start.lng).y,
+                })}
+                onMouseLeave={() => setHover(null)}
+              >
+                {dot.start.label ? <title>{dot.start.label}</title> : null}
+              </circle>
               <circle
                 cx={projectPoint(dot.start.lat, dot.start.lng).x}
                 cy={projectPoint(dot.start.lat, dot.start.lng).y}
                 r="2"
                 fill={lineColor}
                 opacity="0.5"
+                className="cursor-pointer"
+                onMouseEnter={() => setHover({
+                  label: dot.start.label || "",
+                  x: projectPoint(dot.start.lat, dot.start.lng).x,
+                  y: projectPoint(dot.start.lat, dot.start.lng).y,
+                })}
+                onMouseLeave={() => setHover(null)}
               >
+                {dot.start.label ? <title>{dot.start.label}</title> : null}
                 <animate
                   attributeName="r"
                   from="2"
@@ -130,41 +141,74 @@ export function WorldMap({
                 />
               </circle>
             </g>
-            <g key={`end-${i}`}>
-              <circle
-                cx={projectPoint(dot.end.lat, dot.end.lng).x}
-                cy={projectPoint(dot.end.lat, dot.end.lng).y}
-                r="2"
-                fill={lineColor}
-              />
-              <circle
-                cx={projectPoint(dot.end.lat, dot.end.lng).x}
-                cy={projectPoint(dot.end.lat, dot.end.lng).y}
-                r="2"
-                fill={lineColor}
-                opacity="0.5"
-              >
-                <animate
-                  attributeName="r"
-                  from="2"
-                  to="8"
-                  dur="1.5s"
-                  begin="0s"
-                  repeatCount="indefinite"
-                />
-                <animate
-                  attributeName="opacity"
-                  from="0.5"
-                  to="0"
-                  dur="1.5s"
-                  begin="0s"
-                  repeatCount="indefinite"
-                />
-              </circle>
-            </g>
+            {!hideEndDots && (
+              <g key={`end-${i}`}>
+                <circle
+                  cx={projectPoint(dot.end.lat, dot.end.lng).x}
+                  cy={projectPoint(dot.end.lat, dot.end.lng).y}
+                  r="2"
+                  fill={lineColor}
+                  className="cursor-pointer"
+                  onMouseEnter={() => setHover({
+                    label: dot.end.label || "",
+                    x: projectPoint(dot.end.lat, dot.end.lng).x,
+                    y: projectPoint(dot.end.lat, dot.end.lng).y,
+                  })}
+                  onMouseLeave={() => setHover(null)}
+                >
+                  {dot.end.label ? <title>{dot.end.label}</title> : null}
+                </circle>
+                <circle
+                  cx={projectPoint(dot.end.lat, dot.end.lng).x}
+                  cy={projectPoint(dot.end.lat, dot.end.lng).y}
+                  r="2"
+                  fill={lineColor}
+                  opacity="0.5"
+                  className="cursor-pointer"
+                  onMouseEnter={() => setHover({
+                    label: dot.end.label || "",
+                    x: projectPoint(dot.end.lat, dot.end.lng).x,
+                    y: projectPoint(dot.end.lat, dot.end.lng).y,
+                  })}
+                  onMouseLeave={() => setHover(null)}
+                >
+                  {dot.end.label ? <title>{dot.end.label}</title> : null}
+                  <animate
+                    attributeName="r"
+                    from="2"
+                    to="8"
+                    dur="1.5s"
+                    begin="0s"
+                    repeatCount="indefinite"
+                  />
+                  <animate
+                    attributeName="opacity"
+                    from="0.5"
+                    to="0"
+                    dur="1.5s"
+                    begin="0s"
+                    repeatCount="indefinite"
+                  />
+                </circle>
+              </g>
+            )}
           </g>
         ))}
       </svg>
+
+      {hover && hover.label ? (
+        <div
+          className="absolute pointer-events-none"
+          style={{
+            left: `${(hover.x / 800) * 100}%`,
+            top: `${(hover.y / 400) * 100}%`,
+          }}
+        >
+          <div className="-translate-x-1/2 -translate-y-[120%] rounded-md bg-black/85 border border-white/10 px-2 py-1 text-[11px] text-white shadow-md transition-opacity duration-75">
+            {hover.label}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
