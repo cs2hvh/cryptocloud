@@ -1,7 +1,7 @@
 'use client';
 
 import { useAuth } from '@/hooks/useAuth';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
@@ -17,6 +17,7 @@ import {
   FaUserShield,
   FaChevronLeft,
   FaChevronRight,
+  FaChevronDown,
 } from 'react-icons/fa';
 
 const sidebarItems = [
@@ -24,7 +25,6 @@ const sidebarItems = [
   { name: 'Servers', href: '/dashboard/servers', icon: FaServer },
   { name: 'Analytics', href: '/dashboard/analytics', icon: FaChartBar },
   { name: 'Settings', href: '/dashboard/settings', icon: FaCog },
-  { name: 'Admin', href: '/dashboard/admin', icon: FaUserShield },
 ];
 
 export default function DashboardLayout({
@@ -37,6 +37,9 @@ export default function DashboardLayout({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [adminOpen, setAdminOpen] = useState(true);
+  const [adminServersOpen, setAdminServersOpen] = useState(true);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -103,6 +106,106 @@ export default function DashboardLayout({
                   </Link>
                 );
               })}
+
+              {/* Admin section with nested items */}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setAdminOpen((v) => !v)}
+                  className={`w-full flex ${collapsed ? 'justify-center gap-0' : 'items-center gap-3'} px-3 py-2 rounded-xl border transition-colors ${
+                    pathname === '/dashboard/admin'
+                      ? 'text-white bg-white/10 border-white/15'
+                      : 'text-white/70 border-transparent hover:text-white hover:bg-white/5 hover:border-white/10'
+                  }`}
+                  title={collapsed ? 'Admin' : undefined}
+                >
+                  <FaUserShield className="h-5 w-5" />
+                  {!collapsed && (
+                    <>
+                      <span className="font-normal flex-1 text-left">Admin</span>
+                      <FaChevronDown className={`h-3.5 w-3.5 transition-transform ${adminOpen ? '' : '-rotate-90'}`} />
+                    </>
+                  )}
+                </button>
+
+                {!collapsed && adminOpen && (
+                  <div className="mt-1 ml-8 space-y-1">
+                    {/* Hosts */}
+                    {(() => {
+                      const active = pathname === '/dashboard/admin' && (searchParams.get('tab') || 'hosts') === 'hosts';
+                      return (
+                        <Link
+                          href={'/dashboard/admin?tab=hosts'}
+                          className={`block px-3 py-2 rounded-lg border text-sm ${
+                            active ? 'text-white bg-white/10 border-white/15' : 'text-white/70 border-transparent hover:text-white hover:bg-white/5 hover:border-white/10'
+                          }`}
+                        >
+                          Hosts
+                        </Link>
+                      );
+                    })()}
+
+                    {/* Servers group */}
+                    <button
+                      type="button"
+                      onClick={() => setAdminServersOpen((v) => !v)}
+                      className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${
+                        pathname === '/dashboard/admin' && (searchParams.get('tab') || 'hosts') === 'servers'
+                          ? 'text-white bg-white/10 border-white/15'
+                          : 'text-white/70 border-transparent hover:text-white hover:bg-white/5 hover:border-white/10'
+                      }`}
+                    >
+                      <span className="flex-1 text-left">Servers</span>
+                      <FaChevronDown className={`h-3 w-3 transition-transform ${adminServersOpen ? '' : '-rotate-90'}`} />
+                    </button>
+                    {adminServersOpen && (
+                      <div className="ml-4 space-y-1">
+                        {(() => {
+                          const active = pathname === '/dashboard/admin' && (searchParams.get('tab') || 'hosts') === 'servers' && (searchParams.get('sv') || 'provision') === 'provision';
+                          return (
+                            <Link
+                              href={'/dashboard/admin?tab=servers&sv=provision'}
+                              className={`block px-3 py-2 rounded-lg border text-sm ${
+                                active ? 'text-white bg-white/10 border-white/15' : 'text-white/70 border-transparent hover:text-white hover:bg-white/5 hover:border-white/10'
+                              }`}
+                            >
+                              Provision VM
+                            </Link>
+                          );
+                        })()}
+                        {(() => {
+                          const active = pathname === '/dashboard/admin' && (searchParams.get('tab') || 'hosts') === 'servers' && (searchParams.get('sv') || 'provision') === 'list';
+                          return (
+                            <Link
+                              href={'/dashboard/admin?tab=servers&sv=list'}
+                              className={`block px-3 py-2 rounded-lg border text-sm ${
+                                active ? 'text-white bg-white/10 border-white/15' : 'text-white/70 border-transparent hover:text-white hover:bg-white/5 hover:border-white/10'
+                              }`}
+                            >
+                              Servers
+                            </Link>
+                          );
+                        })()}
+                      </div>
+                    )}
+
+                    {/* Users */}
+                    {(() => {
+                      const active = pathname === '/dashboard/admin' && (searchParams.get('tab') || 'hosts') === 'users';
+                      return (
+                        <Link
+                          href={'/dashboard/admin?tab=users'}
+                          className={`block px-3 py-2 rounded-lg border text-sm ${
+                            active ? 'text-white bg-white/10 border-white/15' : 'text-white/70 border-transparent hover:text-white hover:bg-white/5 hover:border-white/10'
+                          }`}
+                        >
+                          Users
+                        </Link>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
             </div>
           </nav>
 
