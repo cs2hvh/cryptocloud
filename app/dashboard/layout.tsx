@@ -22,7 +22,6 @@ import {
 
 const sidebarItems = [
   { name: 'Wallet', href: '/dashboard/wallet', icon: FaWallet },
-  { name: 'Servers', href: '/dashboard/servers', icon: FaServer },
   { name: 'Analytics', href: '/dashboard/analytics', icon: FaChartBar },
   { name: 'Settings', href: '/dashboard/settings', icon: FaCog },
 ];
@@ -40,6 +39,7 @@ export default function DashboardLayout({
   const searchParams = useSearchParams();
   const [adminOpen, setAdminOpen] = useState(true);
   const [adminServersOpen, setAdminServersOpen] = useState(true);
+  const [serversOpen, setServersOpen] = useState(true);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -66,7 +66,7 @@ export default function DashboardLayout({
         initial={{ width: 256 }}
         animate={{ width: collapsed ? 80 : 256 }}
         transition={{ duration: 0.25, ease: 'easeOut' }}
-        className={`fixed inset-y-0 left-0 z-40 bg-black/40 backdrop-blur-md border-r border-white/10 transform transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
+        className={`fixed inset-y-0 left-0 z-40 bg-neutral-950 border-r border-white/10 transform transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
       >
         <div className="flex flex-col h-full pt-3">
           {/* Sidebar top brand + collapse */}
@@ -107,6 +107,62 @@ export default function DashboardLayout({
                 );
               })}
 
+              {/* Servers section with nested items */}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setServersOpen((v) => !v)}
+                  className={`w-full flex ${collapsed ? 'justify-center gap-0' : 'items-center gap-3'} px-3 py-2 rounded-xl border transition-colors ${
+                    pathname?.startsWith('/dashboard/servers')
+                      ? 'text-white bg-white/10 border-white/15'
+                      : 'text-white/70 border-transparent hover:text-white hover:bg-white/5 hover:border-white/10'
+                  }`}
+                  title={collapsed ? 'Servers' : undefined}
+                >
+                  <FaServer className="h-5 w-5" />
+                  {!collapsed && (
+                    <>
+                      <span className="font-normal flex-1 text-left">Servers</span>
+                      <FaChevronDown className={`h-3.5 w-3.5 transition-transform ${serversOpen ? '' : '-rotate-90'}`} />
+                    </>
+                  )}
+                </button>
+                {!collapsed && serversOpen && (
+                  <div className="mt-1 ml-8 space-y-1">
+                    {(() => {
+                      const active = pathname === '/dashboard/servers' && (searchParams.get('view') || 'deploy') === 'deploy';
+                      return (
+                        <Link
+                          href={'/dashboard/servers?view=deploy'}
+                          className={`group relative block py-2 pr-3 pl-4 text-sm border-l-2 transition-all ${
+                            active
+                              ? 'text-[#60A5FA] border-l-[#60A5FA] bg-[#60A5FA]/10'
+                              : 'text-white/70 border-l-transparent hover:text-white hover:border-l-[#60A5FA]/60 hover:bg-[#60A5FA]/5 hover:pl-5'
+                          }`}
+                        >
+                          Deploy Instance
+                        </Link>
+                      );
+                    })()}
+                    {(() => {
+                      const active = pathname === '/dashboard/servers' && (searchParams.get('view') || 'deploy') === 'list';
+                      return (
+                        <Link
+                          href={'/dashboard/servers?view=list'}
+                          className={`group relative block py-2 pr-3 pl-4 text-sm border-l-2 transition-all ${
+                            active
+                              ? 'text-[#60A5FA] border-l-[#60A5FA] bg-[#60A5FA]/10'
+                              : 'text-white/70 border-l-transparent hover:text-white hover:border-l-[#60A5FA]/60 hover:bg-[#60A5FA]/5 hover:pl-5'
+                          }`}
+                        >
+                          My Servers
+                        </Link>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+
               {/* Admin section with nested items */}
               <div>
                 <button
@@ -136,8 +192,10 @@ export default function DashboardLayout({
                       return (
                         <Link
                           href={'/dashboard/admin?tab=hosts'}
-                          className={`block px-3 py-2 rounded-lg border text-sm ${
-                            active ? 'text-white bg-white/10 border-white/15' : 'text-white/70 border-transparent hover:text-white hover:bg-white/5 hover:border-white/10'
+                          className={`group relative block py-2 pr-3 pl-4 text-sm border-l-2 transition-all ${
+                            active
+                              ? 'text-[#60A5FA] border-l-[#60A5FA] bg-[#60A5FA]/10'
+                              : 'text-white/70 border-l-transparent hover:text-white hover:border-l-[#60A5FA]/60 hover:bg-[#60A5FA]/5 hover:pl-5'
                           }`}
                         >
                           Hosts
@@ -165,8 +223,10 @@ export default function DashboardLayout({
                           return (
                             <Link
                               href={'/dashboard/admin?tab=servers&sv=provision'}
-                              className={`block px-3 py-2 rounded-lg border text-sm ${
-                                active ? 'text-white bg-white/10 border-white/15' : 'text-white/70 border-transparent hover:text-white hover:bg-white/5 hover:border-white/10'
+                              className={`group relative block py-2 pr-3 pl-4 text-sm border-l-2 transition-all ${
+                                active
+                                  ? 'text-[#60A5FA] border-l-[#60A5FA] bg-[#60A5FA]/10'
+                                  : 'text-white/70 border-l-transparent hover:text-white hover:border-l-[#60A5FA]/60 hover:bg-[#60A5FA]/5 hover:pl-5'
                               }`}
                             >
                               Provision VM
@@ -178,8 +238,10 @@ export default function DashboardLayout({
                           return (
                             <Link
                               href={'/dashboard/admin?tab=servers&sv=list'}
-                              className={`block px-3 py-2 rounded-lg border text-sm ${
-                                active ? 'text-white bg-white/10 border-white/15' : 'text-white/70 border-transparent hover:text-white hover:bg-white/5 hover:border-white/10'
+                              className={`group relative block py-2 pr-3 pl-4 text-sm border-l-2 transition-all ${
+                                active
+                                  ? 'text-[#60A5FA] border-l-[#60A5FA] bg-[#60A5FA]/10'
+                                  : 'text-white/70 border-l-transparent hover:text-white hover:border-l-[#60A5FA]/60 hover:bg-[#60A5FA]/5 hover:pl-5'
                               }`}
                             >
                               Servers
@@ -195,8 +257,10 @@ export default function DashboardLayout({
                       return (
                         <Link
                           href={'/dashboard/admin?tab=users'}
-                          className={`block px-3 py-2 rounded-lg border text-sm ${
-                            active ? 'text-white bg-white/10 border-white/15' : 'text-white/70 border-transparent hover:text-white hover:bg-white/5 hover:border-white/10'
+                          className={`group relative block py-2 pr-3 pl-4 text-sm border-l-2 transition-all ${
+                            active
+                              ? 'text-[#60A5FA] border-l-[#60A5FA] bg-[#60A5FA]/10'
+                              : 'text-white/70 border-l-transparent hover:text-white hover:border-l-[#60A5FA]/60 hover:bg-[#60A5FA]/5 hover:pl-5'
                           }`}
                         >
                           Users
