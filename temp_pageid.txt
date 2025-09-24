@@ -1,0 +1,146 @@
+﻿"use client";
+
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import LineChart from "@/components/ui/line-chart";
+import { supabase } from "@/lib/supabase";
+import { FaPlay, FaRedo, FaPowerOff, FaCopy } from "react-icons/fa";
+
+type MetricsPoint = { t: number; cpu: number | null; memUsed: number | null; netIn: number | null; netOut: number | null };
+
+export default function VmMonitorPage({ params }: { params: { id: string } }) {
+  const id = params.id;
+  const [server, setServer] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [range, setRange] = useState<"hour" | "day" | "week">("hour");
+  const [metrics, setMetrics] = useState<MetricsPoint[]>([]);
+  const [acting, setActing] = useState<null | "start" | "reboot" | "stop">(null);
+  const router = useRouter();
+
+  const loadServer = useCallback(async () => {
+    const { data, error } = await supabase.from("servers").select("*").eq("id", id).maybeSingle();
+    if (!error) setServer(data);
+  }, [id]);
+
+  const loadMetrics = useCallback(async () => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    const res = await fetch(`/api/proxmox/vms/metrics?serverId=${encodeURIComponent(id)}&range=${range}`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+    const json = await res.json();
+    if (res.ok && json.ok) setMetrics(json.series || []);
+  }, [id, range]);
+
+  useEffect(() => { setLoading(true); Promise.all([loadServer(), loadMetrics()]).finally(()=>setLoading(false)); }, [loadServer, loadMetrics]);
+  useEffect(() => { const iv = setInterval(loadMetrics, 30000); return () => clearInterval(iv); }, [loadMetrics]);
+
+  const cpuSeries = useMemo(() => metrics.map((p: MetricsPoint) => ({ x: p.t, y: p.cpu ?? null })), [metrics]);
+  const ramSeries = useMemo(() => metrics.map((p: MetricsPoint) => ({ x: p.t, y: p.memUsed ?? null })), [metrics]);
+  const netInSeries = useMemo(() => metrics.map((p: MetricsPoint) => ({ x: p.t, y: p.netIn ?? null })), [metrics]);
+  const netOutSeries = useMemo(() => metrics.map((p: MetricsPoint) => ({ x: p.t, y: p.netOut ?? null })), [metrics]);
+
+  const maxOf = (arr: (number | null)[]) => {
+    const vals = arr.filter((v): v is number => typeof v === "number" && isFinite(v));
+    return vals.length ? Math.max(...vals) : 1;
+  };
+  const netMax = Math.max(maxOf(netInSeries.map(p=>p.y)), maxOf(netOutSeries.map(p=>p.y)));
+  const fmtBytes = (v: number) => {
+    if (v < 1024) return `${Math.round(v)} B/s`;
+    if (v < 1024*1024) return `${(v/1024).toFixed(1)} KB/s`;
+    if (v < 1024*1024*1024) return `${(v/1024/1024).toFixed(2)} MB/s`;
+    return `${(v/1024/1024/1024).toFixed(2)} GB/s`;
+  };
+
+  const powerAction = async (action: "start" | "reboot" | "stop") => {
+    if (!server?.id) return;
+    if ((action === "reboot" || action === "stop") && !window.confirm(`${action === "reboot" ? "Reboot" : "Power off"} ${server.name || "VM"} (${server.vmid})?`)) return;
+    setActing(action);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      const res = await fetch("/api/proxmox/vms/power", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+        body: JSON.stringify({ serverId: server.id, action }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json.error || "Action failed");
+      await loadServer();
+    } catch {}
+    finally { setActing(null); }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-medium text-white">VM Monitor</h1>
+          <p className="text-white/60 text-sm">{server?.name || id} â€¢ {server?.ip || ""}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Link href="/dashboard/servers?view=list"><Button className="bg-white/10 text-white border border-white/10 hover:bg-white/20">Back to My Servers</Button></Link>
+          <select className="bg-black border border-white/10 text-white rounded px-2 py-1 text-sm" value={range} onChange={(e)=>setRange(e.target.value as any)}>
+            <option value="hour">Last hour</option>
+            <option value="day">Last day</option>
+            <option value="week">Last week</option>
+          </select>
+        </div>
+      </div>
+
+      {loading ? (<div className="text-white/60">Loading...</div>) : (
+        <>
+          {/* Details & actions */}
+          <Card className="bg-black/50 border-white/10">
+            <CardHeader>
+              <CardTitle className="text-white">{server?.name || 'VM'} <span className="text-white/40 text-sm ml-2">#{server?.vmid}</span></CardTitle>
+              <CardDescription className="text-white/60">Node: {server?.node || 'â€”'} â€¢ IP: {server?.ip || 'â€”'} â€¢ Status: {server?.status || 'â€”'}</CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2 items-center">
+              <div className="text-white/80 text-sm">Config: {server?.cpu_cores || '?'} vCPU â€¢ {server?.memory_mb || 0} MB{server?.disk_gb ? ` â€¢ ${server.disk_gb} GB` : ''}</div>
+              <div className="grow" />
+              {String(server?.status || '').toLowerCase() === 'stopped' ? (
+                <Button onClick={() => powerAction('start')} disabled={acting==='start'} className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40"><FaPlay className="mr-2" /> Start</Button>
+              ) : (
+                <>
+                  <Button onClick={() => powerAction('reboot')} disabled={acting==='reboot'} className="bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-200 border border-yellow-500/40"><FaRedo className="mr-2" /> Reboot</Button>
+                  <Button onClick={() => powerAction('stop')} disabled={acting==='stop'} className="bg-red-500/20 hover:bg-red-500/30 text-red-200 border border-red-500/40"><FaPowerOff className="mr-2" /> Power Off</Button>
+                </>
+              )}
+              <Button onClick={async()=>{ if(server?.ip) { await navigator.clipboard.writeText(server.ip);} }} variant="ghost" className="text-white/80 hover:text-white"><FaCopy className="mr-2" /> Copy IP</Button>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-black/50 border-white/10">
+            <CardHeader><CardTitle className="text-white">CPU Usage</CardTitle><CardDescription className="text-white/60">Percent over time</CardDescription></CardHeader>
+            <CardContent>
+              <LineChart data={cpuSeries} width={960} height={280} color="#60A5FA" yMin={0} yMax={100} yPercent={true} />
+            </CardContent>
+          </Card>
+
+          <Card className="bg-black/50 border-white/10">
+            <CardHeader><CardTitle className="text-white">RAM Usage</CardTitle><CardDescription className="text-white/60">Percent over time</CardDescription></CardHeader>
+            <CardContent>
+              <LineChart data={ramSeries} width={960} height={280} color="#34D399" yMin={0} yMax={100} yPercent={true} />
+            </CardContent>
+          </Card>
+
+          <Card className="bg-black/50 border-white/10">
+            <CardHeader><CardTitle className="text-white">Network In</CardTitle><CardDescription className="text-white/60">Bytes per second</CardDescription></CardHeader>
+            <CardContent>
+              <LineChart data={netInSeries} width={960} height={280} color="#FBBF24" yMin={0} yMax={Math.max(1, netMax)} yPercent={false} formatY={fmtBytes} />
+            </CardContent>
+          </Card>
+
+          <Card className="bg-black/50 border-white/10">
+            <CardHeader><CardTitle className="text-white">Network Out</CardTitle><CardDescription className="text-white/60">Bytes per second</CardDescription></CardHeader>
+            <CardContent>
+              <LineChart data={netOutSeries} width={960} height={280} color="#F472B6" yMin={0} yMax={Math.max(1, netMax)} yPercent={false} formatY={fmtBytes} />
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
