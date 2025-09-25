@@ -1,5 +1,6 @@
 ﻿import { NextRequest } from "next/server";
 import { createServerSupabase } from "@/lib/supabaseServer";
+import { createClient } from "@supabase/supabase-js";
 import { requireAdmin } from "../_utils";
 import { Agent as UndiciAgent } from "undici";
 
@@ -144,15 +145,27 @@ export async function GET(req: NextRequest) {
   const status = url.searchParams.get("status");
   const location = url.searchParams.get("location");
 
-  const supabase = createServerSupabase();
+  // Use service role key for admin operations
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    return Response.json({ ok: false, error: 'Server configuration error' }, { status: 500 });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
   let query = supabase.from("servers").select("*").order("created_at", { ascending: false }).limit(limit);
   if (ownerId) query = query.eq("owner_id", ownerId);
   if (status) query = query.eq("status", status);
   if (location) query = query.eq("location", location);
 
   const { data, error } = await query;
-  if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
+  if (error) {
+    console.error('Admin servers query error:', error);
+    return Response.json({ ok: false, error: error.message }, { status: 500 });
+  }
 
+  console.log(`Admin servers: Found ${data?.length || 0} servers`);
   return Response.json({ ok: true, servers: data || [] });
 }
 
@@ -199,7 +212,15 @@ export async function POST(req: NextRequest) {
     details: details ?? null,
   };
 
-  const supabase = createServerSupabase();
+  // Use service role key for admin operations
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    return Response.json({ ok: false, error: 'Server configuration error' }, { status: 500 });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
   const { data, error } = await supabase.from("servers").insert(payload).select("*").single();
   if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
 
@@ -256,7 +277,15 @@ export async function PATCH(req: NextRequest) {
     return Response.json({ ok: false, error: "No updates provided" }, { status: 400 });
   }
 
-  const supabase = createServerSupabase();
+  // Use service role key for admin operations
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    return Response.json({ ok: false, error: 'Server configuration error' }, { status: 500 });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
   const { data, error } = await supabase.from("servers").update(updates).eq("id", id).select("*").single();
   if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
 
@@ -271,7 +300,15 @@ export async function DELETE(req: NextRequest) {
   const id = url.searchParams.get("id");
   if (!id) return Response.json({ ok: false, error: "id query param required" }, { status: 400 });
 
-  const supabase = createServerSupabase();
+  // Use service role key for admin operations
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    return Response.json({ ok: false, error: 'Server configuration error' }, { status: 500 });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   // Lookup the server to identify Proxmox VM
   const { data: server, error: serverErr } = await supabase

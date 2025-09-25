@@ -2,18 +2,20 @@
 
 import { motion } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
+import { useWallet } from "@/hooks/useWallet";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FaServer, FaSync, FaCopy, FaPowerOff, FaPlay, FaRedo, FaCheck, FaChevronLeft, FaChevronRight, FaMapMarkerAlt, FaMicrochip, FaHdd, FaMemory, FaInfoCircle, FaCheckCircle, FaExternalLinkAlt, FaThumbsUp } from "react-icons/fa";
+import { FaServer, FaSync, FaCopy, FaPowerOff, FaPlay, FaRedo, FaCheck, FaChevronLeft, FaChevronRight, FaMapMarkerAlt, FaMicrochip, FaHdd, FaMemory, FaInfoCircle, FaCheckCircle, FaExternalLinkAlt, FaThumbsUp, FaWallet, FaExclamationTriangle } from "react-icons/fa";
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import Sparkline from "@/components/ui/sparkline";
+import { calculateHourlyCost, calculateMonthlyCost, formatCurrency, canAffordServer, getEstimatedRuntime, type ServerSpecs } from "@/lib/pricing";
 
 type Option = { id: string; name?: string; host?: string; ip?: string; mac?: string | null; location?: string };
 
@@ -25,6 +27,7 @@ const fadeInUp = {
 
 export default function ServersPage() {
   const { user } = useAuth();
+  const { balance, loading: walletLoading } = useWallet();
   const searchParams = useSearchParams();
 
   // Options + view
@@ -104,10 +107,6 @@ export default function ServersPage() {
     sshPassword.length >= 6 && sshPassword === sshPasswordConfirm,
   ];
 
-  const submitDisabled = useMemo(() => {
-    return submitLoading || stepsValid.includes(false);
-  }, [submitLoading, stepsValid]);
-
   const onSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     setSubmitLoading(true);
@@ -183,15 +182,38 @@ export default function ServersPage() {
     } catch {}
   };
 
-  const estimateStr = useMemo(() => {
-    const estMonthly = cpuCores * 3 + memoryGB * 1.5 + diskGB * 0.1;
-    const estHourly = estMonthly / 720;
-    return `$${estMonthly.toFixed(2)}/mo • $${estHourly.toFixed(3)}/hr`;
-  }, [cpuCores, memoryGB, diskGB]);
+  const serverSpecs: ServerSpecs = useMemo(() => ({
+    cpuCores,
+    memoryGB,
+    diskGB,
+    location
+  }), [cpuCores, memoryGB, diskGB, location]);
+
+  const pricing = useMemo(() => {
+    const hourly = calculateHourlyCost(serverSpecs);
+    const monthly = calculateMonthlyCost(serverSpecs);
+    return {
+      hourly,
+      monthly,
+      formatted: `${formatCurrency(hourly)}/hr • ${formatCurrency(monthly)}/mo`
+    };
+  }, [serverSpecs]);
+
+  const canAfford = useMemo(() => {
+    return canAffordServer(balance, serverSpecs, 1);
+  }, [balance, serverSpecs]);
+
+  const estimatedRuntime = useMemo(() => {
+    return getEstimatedRuntime(balance, serverSpecs);
+  }, [balance, serverSpecs]);
 
   const passwordStrength = useMemo(() => {
     let score = 0; if (sshPassword.length >= 6) score += 30; if (/[A-Z]/.test(sshPassword)) score += 20; if (/[a-z]/.test(sshPassword)) score += 20; if (/[0-9]/.test(sshPassword)) score += 15; if (/[^A-Za-z0-9]/.test(sshPassword)) score += 15; return Math.min(score, 100);
   }, [sshPassword]);
+
+  const submitDisabled = useMemo(() => {
+    return submitLoading || stepsValid.includes(false) || !canAfford;
+  }, [submitLoading, stepsValid, canAfford]);
 
   return (
     <motion.div variants={fadeInUp} initial="initial" animate="animate" className="space-y-6">
@@ -329,7 +351,36 @@ export default function ServersPage() {
                 <div className="flex items-center justify-between py-2 border-b border-white/10"><div className="text-white/60 flex items-center gap-2"><FaMapMarkerAlt /> Location</div><div className="text-white ml-4 max-w-[60%] text-right">{options?.locations.find((l) => l.id === location)?.name || location || "—"}</div></div>
                 <div className="flex items-center justify-between py-2 border-b border-white/10"><div className="text-white/60">Operating System</div><div className="text-white ml-4 max-w-[60%] text-right">{os || "—"}</div></div>
                 <div className="flex flex-wrap gap-2"><span className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs bg-white/10 border border-white/10 text-white/90"><FaMicrochip /> {cpuCores} vCPU</span><span className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs bg-white/10 border border-white/10 text-white/90"><FaMemory /> {memoryGB} GB</span><span className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs bg-white/10 border border-white/10 text-white/90"><FaHdd /> {diskGB} GB</span></div>
-                <div className="rounded-lg p-3 bg-gradient-to-r from-white/5 to-white/10 border border-white/10"><div className="text-white/60">Estimated Price</div><div className="text-white text-sm mt-1">{estimateStr}</div><div className="text-white/40 text-[11px] mt-1">Estimate only. Final price may vary by region and host.</div></div>
+
+                {/* Wallet Balance */}
+                <div className="rounded-lg p-3 bg-gradient-to-r from-white/5 to-white/10 border border-white/10">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-white/60 flex items-center gap-2">
+                      <FaWallet /> Wallet Balance
+                    </div>
+                    <div className="text-white text-sm">
+                      {walletLoading ? '...' : formatCurrency(balance)}
+                    </div>
+                  </div>
+                  {!canAfford && (
+                    <div className="flex items-center gap-2 text-orange-400 text-xs">
+                      <FaExclamationTriangle />
+                      <span>Insufficient balance (requires {formatCurrency(pricing.hourly)} minimum)</span>
+                    </div>
+                  )}
+                  {canAfford && estimatedRuntime > 0 && (
+                    <div className="text-white/50 text-xs">
+                      Estimated runtime: ~{estimatedRuntime}h
+                    </div>
+                  )}
+                </div>
+
+                {/* Pricing */}
+                <div className="rounded-lg p-3 bg-gradient-to-r from-white/5 to-white/10 border border-white/10">
+                  <div className="text-white/60">Server Cost</div>
+                  <div className="text-white text-sm mt-1">{pricing.formatted}</div>
+                  <div className="text-white/40 text-[11px] mt-1">Initial charge: {formatCurrency(pricing.hourly)} (1 hour minimum)</div>
+                </div>
                 {step === 4 && (<div className="space-y-2"><div className="flex items-center justify-between text-white/70"><span className="flex items-center gap-2"><FaInfoCircle /> Password Strength</span><span>{passwordStrength}%</span></div><div className="h-1.5 w-full bg-white/10 rounded"><div className="h-1.5 rounded bg-gradient-to-r from-emerald-400 to-green-300" style={{ width: `${passwordStrength}%` }} /></div></div>)}
                 <div><Button onClick={deployNow} disabled={submitDisabled} className="w-full bg-white/10 hover:bg-white/20 text-white border border-white/10 disabled:opacity-50">{submitLoading ? "Provisioning..." : "Deploy Instance"}</Button></div>
               </CardContent>

@@ -1,8 +1,11 @@
 ﻿import { NextRequest } from "next/server";
 import { createServerSupabase } from "@/lib/supabaseServer";
+import { createClient } from "@supabase/supabase-js";
 import { requireAdmin } from "../_utils";
 
 export const dynamic = "force-dynamic";
+
+const VALID_ROLES = new Set(["user", "admin"]);
 
 function parseJson(value: unknown) {
   if (value == null || value === "") return undefined;
@@ -12,6 +15,21 @@ function parseJson(value: unknown) {
   } catch {
     throw new Error("Invalid JSON payload provided");
   }
+}
+
+async function fetchRolesMap(supabase: ReturnType<typeof createServerSupabase>, userIds: string[]) {
+  if (userIds.length === 0) return new Map<string, string>();
+  const { data: rows } = await supabase
+    .from("user_roles")
+    .select("user_id, role")
+    .in("user_id", userIds);
+  const map = new Map<string, string>();
+  for (const row of rows || []) {
+    if (row?.user_id && typeof row.role === "string") {
+      map.set(String(row.user_id), row.role);
+    }
+  }
+  return map;
 }
 
 export async function GET(req: NextRequest) {
@@ -24,14 +42,26 @@ export async function GET(req: NextRequest) {
   const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam - 1 : 0;
   const perPage = Number.isFinite(perPageParam) && perPageParam > 0 && perPageParam <= 200 ? perPageParam : 50;
 
-  const supabase = createServerSupabase();
+  // Use service role key for admin operations
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    return Response.json({ ok: false, error: 'Server configuration error' }, { status: 500 });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
   const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
   if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
 
+  const users = data?.users ?? [];
+  const roles = await fetchRolesMap(supabase, users.map((u) => u.id).filter(Boolean));
+  const enriched = users.map((user) => ({ ...user, role: roles.get(user.id) ?? "user" }));
+
   return Response.json({
     ok: true,
-    users: data?.users ?? [],
-    total: data?.total ?? data?.users?.length ?? 0,
+    users: enriched,
+    total: data?.total ?? users.length ?? 0,
     page: page + 1,
     perPage,
   });
@@ -61,11 +91,21 @@ export async function POST(req: NextRequest) {
     app_metadata: appMetadata,
   };
 
+  const role = typeof body.role === "string" ? body.role.toLowerCase() : undefined;
+  if (role && !VALID_ROLES.has(role)) {
+    return Response.json({ ok: false, error: "Invalid role" }, { status: 400 });
+  }
+
   const supabase = createServerSupabase();
   const { data, error } = await supabase.auth.admin.createUser(payload);
   if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
 
-  return Response.json({ ok: true, user: data.user });
+  const createdUser = data.user;
+  if (createdUser?.id && role) {
+    await supabase.from("user_roles").upsert({ user_id: createdUser.id, role });
+  }
+
+  return Response.json({ ok: true, user: createdUser, role: role ?? "user" });
 }
 
 export async function PATCH(req: NextRequest) {
@@ -93,15 +133,32 @@ export async function PATCH(req: NextRequest) {
   if (userMetadata !== undefined) updates.user_metadata = userMetadata;
   if (appMetadata !== undefined) updates.app_metadata = appMetadata;
 
-  if (Object.keys(updates).length === 0) {
-    return Response.json({ ok: false, error: "No updates provided" }, { status: 400 });
+  const role = typeof body.role === "string" ? body.role.toLowerCase() : undefined;
+  if (role && !VALID_ROLES.has(role)) {
+    return Response.json({ ok: false, error: "Invalid role" }, { status: 400 });
   }
 
-  const supabase = createServerSupabase();
-  const { data, error } = await supabase.auth.admin.updateUserById(id, updates);
-  if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
+  // Use service role key for admin operations
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-  return Response.json({ ok: true, user: data.user });
+  if (!supabaseUrl || !supabaseServiceKey) {
+    return Response.json({ ok: false, error: 'Server configuration error' }, { status: 500 });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+  if (role) {
+    await supabase.from("user_roles").upsert({ user_id: id, role });
+  }
+
+  if (Object.keys(updates).length > 0) {
+    const { error } = await supabase.auth.admin.updateUserById(id, updates);
+    if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
+  }
+
+  const refreshed = await supabase.auth.admin.getUserById(id).catch(() => null);
+  return Response.json({ ok: true, user: refreshed?.user ?? null, role: role ?? undefined });
 }
 
 export async function DELETE(req: NextRequest) {
@@ -115,6 +172,8 @@ export async function DELETE(req: NextRequest) {
   const supabase = createServerSupabase();
   const { error } = await supabase.auth.admin.deleteUser(id);
   if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
+
+  await supabase.from("user_roles").delete().eq("user_id", id);
 
   return Response.json({ ok: true });
 }

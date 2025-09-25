@@ -120,3 +120,36 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Dark themed scrollbars */
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+
+  .scrollbar-track-transparent {
+    scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  }
+
+  .scrollbar-thumb-white\/20::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .scrollbar-thumb-white\/20::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thumb-white\/20::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+  }
+
+  .hover\:scrollbar-thumb-white\/30:hover::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.3);
+  }
+
+  /* Prevent sidebar scroll from affecting main content */
+  .sidebar-scroll-isolation {
+    overscroll-behavior: contain;
+  }
+}

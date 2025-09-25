@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { Agent as UndiciAgent } from "undici";
 import { createServerSupabase } from "@/lib/supabaseServer";
+import { calculateHourlyCost, canAffordServer, type ServerSpecs } from "@/lib/pricing";
 
 export const dynamic = "force-dynamic";
 
@@ -173,6 +174,44 @@ export async function POST(req: NextRequest) {
 
   if (!sshPassword) return Response.json({ ok: false, error: "sshPassword is required" }, { status: 400 });
 
+  // Calculate server costs and check wallet balance
+  const serverSpecs: ServerSpecs = {
+    cpuCores,
+    memoryGB: memoryMB / 1024,
+    diskGB: diskGB || 20,
+    location: hostId
+  };
+
+  const hourlyCost = calculateHourlyCost(serverSpecs);
+  const minimumHours = 1; // Require at least 1 hour of funding
+
+  // Check user's wallet balance if user is provided
+  if (body.ownerId) {
+    try {
+      const { data: wallet } = await supabase
+        .from('wallets')
+        .select('balance')
+        .eq('user_id', body.ownerId)
+        .eq('currency', 'USD')
+        .maybeSingle();
+
+      const balance = wallet?.balance ? parseFloat(wallet.balance) : 0;
+
+      if (!canAffordServer(balance, serverSpecs, minimumHours)) {
+        return Response.json({
+          ok: false,
+          error: `Insufficient wallet balance. Required: $${(hourlyCost * minimumHours).toFixed(4)}, Available: $${balance.toFixed(2)}`,
+          requiredBalance: hourlyCost * minimumHours,
+          currentBalance: balance,
+          hourlyCost
+        }, { status: 402 }); // Payment Required
+      }
+    } catch (walletError) {
+      console.warn('Wallet check failed:', walletError);
+      // Continue without wallet check for admin/system users
+    }
+  }
+
   // IP auto-assign from DB pools if not provided
   let ipPrimary: string | undefined = body.ipPrimary ? String(body.ipPrimary) : undefined;
   let macAddress: string | undefined = body.mac ? String(body.mac) : undefined;
@@ -234,6 +273,7 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
     if (existing) return Response.json({ ok: false, error: "IP already in use" }, { status: 409 });
 
+    const billingStart = new Date();
     const { data: inserted, error: insertErr } = await supabase
       .from("servers")
       .insert({
@@ -250,6 +290,9 @@ export async function POST(req: NextRequest) {
         details: null,
         owner_id: body.ownerId || null,
         owner_email: body.ownerEmail || null,
+        hourly_cost: hourlyCost,
+        total_cost: 0,
+        billing_start: billingStart.toISOString(),
       })
       .select("id")
       .single();
@@ -384,11 +427,59 @@ export async function POST(req: NextRequest) {
           .eq("id", reservationId);
         if (updErr) db.error = updErr.message; else db.saved = true;
       }
+
+      // Deduct initial payment from wallet (1 hour minimum charge)
+      if (body.ownerId && hourlyCost > 0) {
+        try {
+          const initialCharge = hourlyCost * minimumHours;
+
+          // Get wallet
+          const { data: wallet } = await supabase
+            .from('wallets')
+            .select('*')
+            .eq('user_id', body.ownerId)
+            .eq('currency', 'USD')
+            .maybeSingle();
+
+          if (wallet) {
+            const newBalance = parseFloat(wallet.balance) - initialCharge;
+
+            // Update wallet balance
+            await supabase
+              .from('wallets')
+              .update({ balance: newBalance })
+              .eq('id', wallet.id);
+
+            // Create transaction record
+            await supabase
+              .from('wallet_transactions')
+              .insert({
+                wallet_id: wallet.id,
+                user_id: body.ownerId,
+                type: 'server_payment',
+                amount: initialCharge,
+                currency: 'USD',
+                status: 'completed',
+                description: `Initial charge for server ${hostname}`,
+                reference_id: reservationId?.toString(),
+                metadata: {
+                  server_id: reservationId,
+                  server_name: hostname,
+                  specs: serverSpecs,
+                  hourly_cost: hourlyCost
+                }
+              });
+          }
+        } catch (walletErr) {
+          console.warn('Wallet deduction failed:', walletErr);
+          // Don't fail server creation if wallet deduction fails
+        }
+      }
     } catch (e: any) {
       db.error = e?.message || String(e);
     }
 
-    return Response.json({ ...responsePayload, db });
+    return Response.json({ ...responsePayload, db, pricing: { hourlyCost, initialCharge: hourlyCost * minimumHours } });
   } catch (e: any) {
     try {
       if (reservationId != null) {

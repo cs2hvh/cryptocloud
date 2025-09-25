@@ -73,7 +73,15 @@ export async function GET(req: NextRequest) {
   const userId = userData?.user?.id as string | undefined;
   if (!userId) return Response.json({ ok: false, error: "Not authenticated" }, { status: 401 });
 
-  const supabase = createServerSupabase();
+  // Use service role key for database operations
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    return Response.json({ ok: false, error: 'Server configuration error' }, { status: 500 });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
   const { data: server, error: serverErr } = await supabase
     .from("servers")
     .select("id, vmid, node, location")

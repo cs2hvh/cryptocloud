@@ -8,6 +8,9 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { useAuth } from '@/hooks/useAuth';
+import { Badge } from '@/components/ui/badge';
+import AdminProtection from '@/components/AdminProtection';
 
 type IpRow = { ip: string; mac?: string };
 type Pool = { mac: string; ips: IpRow[]; label?: string };
@@ -58,9 +61,10 @@ function formatDate(value?: string | null) {
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
 }
-
 export default function AdminPage() {
   const searchParams = useSearchParams();
+  const { user: authUser, loading: authLoading, isAdmin } = useAuth();
+  const currentUserId = authUser?.id ?? null;
   const [activeTab, setActiveTab] = useState<TabKey>('hosts');
   const [hosts, setHosts] = useState<any[]>([]);
   const [hostLoading, setHostLoading] = useState(true);
@@ -115,12 +119,21 @@ export default function AdminPage() {
 
   const [users, setUsers] = useState<any[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
-  const [usersError, setUsersError] = useState<string | null>(null);  const getAccessToken = useCallback(async () => {
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [userAdminUpdatingId, setUserAdminUpdatingId] = useState<string | null>(null);
+  const [userAdminMessage, setUserAdminMessage] = useState<string | null>(null);
+  const [userAdminError, setUserAdminError] = useState<string | null>(null);
+  const getAccessToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
     return data?.session?.access_token;
   }, []);
 
   const loadHosts = useCallback(async () => {
+    if (!isAdmin) {
+      setHosts([]);
+      setHostLoading(false);
+      return;
+    }
     setHostLoading(true);
     setHostError(null);
     try {
@@ -142,9 +155,14 @@ export default function AdminPage() {
     } finally {
       setHostLoading(false);
     }
-  }, [getAccessToken]);
+  }, [getAccessToken, isAdmin]);
 
   const loadServers = useCallback(async () => {
+    if (!isAdmin) {
+      setServers([]);
+      setServersLoading(false);
+      return;
+    }
     setServersLoading(true);
     setServersError(null);
     try {
@@ -166,9 +184,14 @@ export default function AdminPage() {
     } finally {
       setServersLoading(false);
     }
-  }, [getAccessToken]);
+  }, [getAccessToken, isAdmin]);
 
   const loadProvisionOptions = useCallback(async () => {
+    if (!isAdmin) {
+      setProvOptions(null);
+      setProvOptionsLoading(false);
+      return;
+    }
     setProvOptionsLoading(true);
     setProvError(null);
     try {
@@ -183,11 +206,18 @@ export default function AdminPage() {
     } finally {
       setProvOptionsLoading(false);
     }
-  }, []);
+  }, [isAdmin]);
 
   const loadUsers = useCallback(async () => {
+    if (!isAdmin) {
+      setUsers([]);
+      setUsersLoading(false);
+      return;
+    }
     setUsersLoading(true);
     setUsersError(null);
+    setUserAdminMessage(null);
+    setUserAdminError(null);
     try {
       const token = await getAccessToken();
       const res = await fetch('/api/admin/users?perPage=200', {
@@ -207,7 +237,52 @@ export default function AdminPage() {
     } finally {
       setUsersLoading(false);
     }
-  }, [getAccessToken]);  useEffect(() => {
+  }, [getAccessToken, isAdmin]);
+
+  const updateUserAdmin = useCallback(
+    async (targetUser: any, makeAdmin: boolean) => {
+      if (!isAdmin || !targetUser?.id) return;
+      if (!makeAdmin && currentUserId && targetUser.id === currentUserId) {
+        setUserAdminError('You cannot remove your own admin access.');
+        return;
+      }
+
+      setUserAdminUpdatingId(targetUser.id);
+      setUserAdminError(null);
+      setUserAdminMessage(null);
+
+      try {
+        const token = await getAccessToken();
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) headers.Authorization = `Bearer ${token}`;
+
+        const res = await fetch('/api/admin/users', {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({
+            id: targetUser.id,
+            role: makeAdmin ? 'admin' : 'user',
+          }),
+        });
+
+        const json = await res.json();
+        if (!res.ok || !json.ok) {
+          throw new Error(json.error || 'Failed to update user');
+        }
+
+        await loadUsers();
+        const email = targetUser.email || 'User';
+        setUserAdminMessage(makeAdmin ? `Granted admin access to ${email}.` : `Revoked admin access from ${email}.`);
+      } catch (err: any) {
+        setUserAdminError(err?.message || 'Failed to update user');
+      } finally {
+        setUserAdminUpdatingId(null);
+      }
+    },
+    [currentUserId, getAccessToken, isAdmin, loadUsers]
+  );
+
+  useEffect(() => {
     // Sync active tab with URL query param `tab`
     const t = (searchParams.get('tab') as TabKey) || 'hosts';
     if (t !== activeTab) setActiveTab(t);
@@ -498,8 +573,29 @@ export default function AdminPage() {
     } finally {
       setServerDeletingId(null);
     }
-  };  return (
-    <div className="space-y-6">
+  };
+
+  return (
+    <AdminProtection>
+      <div className="space-y-6">
+        {/* Tab Navigation */}
+        <div className="border-b border-white/10">
+          <nav className="flex space-x-8">
+            {tabs.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
+                  activeTab === tab.key
+                    ? 'border-[#60A5FA] text-white'
+                    : 'border-transparent text-white/60 hover:text-white/80 hover:border-white/20'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+        </div>
 
       {activeTab === 'hosts' && (
         <>
@@ -1111,9 +1207,9 @@ export default function AdminPage() {
         <Card className="bg-black/50 border-white/10">
           <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <CardTitle className="text-white">Users</CardTitle>
+              <CardTitle className="text-white">User Management</CardTitle>
               <CardDescription className="text-white/60">
-                Supabase users retrieved through the admin API.
+                Manage user roles and permissions. Only admins can modify user roles.
               </CardDescription>
             </div>
             <Button
@@ -1131,49 +1227,149 @@ export default function AdminPage() {
             ) : usersError ? (
               <div className="text-red-400">{usersError}</div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-white/60 border-b border-white/10">
-                      <th className="py-2 pr-4">Email</th>
-                      <th className="py-2 pr-4">Status</th>
-                      <th className="py-2 pr-4">Last Sign-In</th>
-                      <th className="py-2 pr-4">Created</th>
-                      <th className="py-2 pr-4">ID</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {users.map((user: any) => {
-                      const status = user.banned
-                        ? 'Banned'
-                        : user.email_confirmed_at
-                        ? 'Verified'
-                        : 'Pending';
-                      return (
-                        <tr key={user.id} className="border-b border-white/5">
-                          <td className="py-2 pr-4 text-white">{user.email}</td>
-                          <td className="py-2 pr-4 text-white/80">{status}</td>
-                          <td className="py-2 pr-4 text-white/80">{formatDate(user.last_sign_in_at)}</td>
-                          <td className="py-2 pr-4 text-white/80">{formatDate(user.created_at)}</td>
-                          <td className="py-2 pr-4 text-white/40">{user.id}</td>
-                        </tr>
-                      );
-                    })}
-                    {users.length === 0 && (
-                      <tr>
-                        <td className="py-4 text-center text-white/60" colSpan={5}>
-                          No users found.
-                        </td>
+              <div className="space-y-4">
+                {/* Role Management Notice */}
+                <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-5 h-5 rounded-full bg-blue-500/20 border border-blue-400/40 flex items-center justify-center mt-0.5">
+                      <div className="w-2 h-2 rounded-full bg-blue-400"></div>
+                    </div>
+                    <div>
+                      <div className="text-white font-medium text-sm">Role-Based Access Control</div>
+                      <div className="text-white/70 text-sm mt-1">
+                        Admin users have full access to this dashboard including user management, server provisioning, and system configuration.
+                        Regular users can only access their own servers and basic dashboard features.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {userAdminMessage && (
+                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
+                    <div className="text-emerald-400 text-sm">{userAdminMessage}</div>
+                  </div>
+                )}
+                {userAdminError && (
+                  <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+                    <div className="text-red-400 text-sm">{userAdminError}</div>
+                  </div>
+                )}
+
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-white/60 border-b border-white/10">
+                        <th className="py-3 pr-4 font-medium">Email</th>
+                        <th className="py-3 pr-4 font-medium">Status</th>
+                        <th className="py-3 pr-4 font-medium">Role</th>
+                        <th className="py-3 pr-4 font-medium">Last Sign-In</th>
+                        <th className="py-3 pr-4 font-medium">Created</th>
+                        <th className="py-3 pr-4 font-medium">User ID</th>
+                        <th className="py-3 pr-4 font-medium">Actions</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {users.map((account: any) => {
+                        const status = account.banned
+                          ? 'Banned'
+                          : account.email_confirmed_at
+                          ? 'Verified'
+                          : 'Pending';
+                        const admin = (account.role ?? 'user') === 'admin';
+                        const isSelf = currentUserId != null && account.id === currentUserId;
+                        const actionDisabled = userAdminUpdatingId === account.id || (admin && isSelf);
+                        const buttonLabel = userAdminUpdatingId === account.id
+                          ? 'Updating...'
+                          : admin
+                          ? isSelf
+                            ? 'You (Admin)'
+                            : 'Revoke Admin'
+                          : 'Grant Admin';
+
+                        return (
+                          <tr key={account.id} className="border-b border-white/5 hover:bg-white/[0.02]">
+                            <td className="py-3 pr-4 text-white font-medium">{account.email}</td>
+                            <td className="py-3 pr-4">
+                              <Badge
+                                variant="outline"
+                                className={
+                                  status === 'Verified'
+                                    ? "text-emerald-300 border-emerald-400/40 bg-emerald-500/10"
+                                    : status === 'Banned'
+                                    ? "text-red-300 border-red-400/40 bg-red-500/10"
+                                    : "text-yellow-300 border-yellow-400/40 bg-yellow-500/10"
+                                }
+                              >
+                                {status}
+                              </Badge>
+                            </td>
+                            <td className="py-3 pr-4">
+                              {admin ? (
+                                <Badge className="bg-purple-500/20 text-purple-200 border border-purple-400/40 font-medium">
+                                  Administrator
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-white/70 border-white/20">
+                                  User
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="py-3 pr-4 text-white/80">{formatDate(account.last_sign_in_at)}</td>
+                            <td className="py-3 pr-4 text-white/80">{formatDate(account.created_at)}</td>
+                            <td className="py-3 pr-4 text-white/40 font-mono text-xs">{account.id}</td>
+                            <td className="py-3 pr-4">
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => updateUserAdmin(account, !admin)}
+                                  disabled={actionDisabled}
+                                  className={
+                                    (admin && !isSelf
+                                      ? 'bg-red-500/20 text-red-200 border border-red-500/40 hover:bg-red-500/30'
+                                      : isSelf
+                                      ? 'bg-white/5 text-white/50 border border-white/10 cursor-not-allowed'
+                                      : 'bg-purple-500/20 text-purple-200 border border-purple-500/40 hover:bg-purple-500/30') +
+                                    ' disabled:opacity-50 disabled:cursor-not-allowed'
+                                  }
+                                  title={
+                                    admin && isSelf
+                                      ? 'You cannot modify your own admin access'
+                                      : admin
+                                      ? `Remove admin access for ${account.email}`
+                                      : `Grant admin access to ${account.email}`
+                                  }
+                                >
+                                  {buttonLabel}
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {users.length === 0 && (
+                        <tr>
+                          <td className="py-8 text-center text-white/60" colSpan={7}>
+                            <div className="flex flex-col items-center gap-2">
+                              <div className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
+                                <span className="text-white/40">👥</span>
+                              </div>
+                              <div>No users found</div>
+                              <div className="text-xs text-white/40">Users will appear here after they sign up</div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </CardContent>
         </Card>
       )}
-    </div>
+      </div>
+    </AdminProtection>
   );
 }
 

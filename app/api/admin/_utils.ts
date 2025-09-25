@@ -14,28 +14,53 @@ export function getBearer(req: NextRequest) {
 }
 
 // Admin gating:
-// - If ADMIN_EMAILS is empty, allow any authenticated user (dev-friendly default).
-// - If ADMIN_EMAILS is "*", allow any authenticated user explicitly.
-// - Else, require the user email to be included in ADMIN_EMAILS (comma-separated).
+// - Role assignments live in public.user_roles (role = 'admin').
+// - ADMIN_EMAILS env still provides a fallback for bootstrap and development.
 export async function requireAdmin(req: NextRequest): Promise<AdminGate> {
   const bearer = getBearer(req);
-  // Use an auth-only client built with the anon key so the bearer JWT is honored
-  // even when a service role key is configured for DB access.
   let email: string | null = null;
+  let userId: string | null = null;
   let metaIsAdmin = false;
+
   if (bearer) {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     if (url && anon) {
       const authClient = createClient(url, anon, {
         auth: { persistSession: false },
-        global: { headers: { Authorization: `Bearer ${bearer}` } as any },
+        global: { headers: { Authorization: 'Bearer ' + bearer } as any },
       } as any);
       const { data: userData } = await authClient.auth.getUser();
       const user = userData?.user as any;
       email = user?.email ?? null;
+      userId = user?.id ?? null;
       metaIsAdmin = Boolean(user?.user_metadata?.is_admin) || (user?.app_metadata?.role === 'admin');
     }
+  }
+
+  if (!email || !userId) return { ok: false, email: email ?? null, isAdmin: false };
+
+  let roleIsAdmin = false;
+  try {
+    // Use service role key for admin operations
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+    if (supabaseUrl && supabaseServiceKey) {
+      const service = createClient(supabaseUrl, supabaseServiceKey);
+      const { data: roleRow } = await service
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', userId)
+        .maybeSingle();
+      roleIsAdmin = roleRow?.role === 'admin';
+    }
+  } catch {
+    // ignore and fall back to env/metadata
+  }
+
+  if (roleIsAdmin || metaIsAdmin) {
+    return { ok: true, email, isAdmin: true };
   }
 
   const adminsRaw = (process.env.ADMIN_EMAILS || '').trim();
@@ -45,8 +70,6 @@ export async function requireAdmin(req: NextRequest): Promise<AdminGate> {
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
 
-  if (!email) return { ok: false, email: null, isAdmin: false };
-  if (metaIsAdmin) return { ok: true, email, isAdmin: true };
   if (admins.length === 0 || wildcard) return { ok: true, email, isAdmin: true };
 
   if (!admins.includes(email.toLowerCase())) {
@@ -55,3 +78,4 @@ export async function requireAdmin(req: NextRequest): Promise<AdminGate> {
 
   return { ok: true, email, isAdmin: true };
 }
+

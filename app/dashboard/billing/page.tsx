@@ -8,11 +8,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { 
-  FaWallet, 
-  FaPlus, 
-  FaBitcoin, 
-  FaEthereum, 
+import { useWallet } from '@/hooks/useWallet';
+import {
+  FaWallet,
+  FaPlus,
+  FaBitcoin,
+  FaEthereum,
   FaCoins,
   FaHistory,
   FaArrowUp,
@@ -20,7 +21,8 @@ import {
   FaCopy,
   FaCheckCircle,
   FaDollarSign,
-  FaBolt
+  FaBolt,
+  FaServer
 } from 'react-icons/fa';
 
 interface Transaction {
@@ -34,22 +36,12 @@ interface Transaction {
 }
 
 export default function Wallet() {
-  const [balance, setBalance] = useState(0);
+  const { balance, transactions, loading, addFunds, loadWallet } = useWallet();
   const [depositAmount, setDepositAmount] = useState('');
   const [selectedCurrency, setSelectedCurrency] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [walletAddress, setWalletAddress] = useState('');
-
-  useEffect(() => {
-    // Load wallet data from localStorage
-    const savedBalance = localStorage.getItem('unserver_wallet_balance');
-    const savedTransactions = localStorage.getItem('unserver_transactions');
-    
-    if (savedBalance) setBalance(parseFloat(savedBalance));
-    if (savedTransactions) setTransactions(JSON.parse(savedTransactions));
-  }, []);
 
   const generateWalletAddress = (currency: string) => {
     const addresses = {
@@ -62,42 +54,31 @@ export default function Wallet() {
   };
 
   const handleDeposit = async () => {
-    if (!depositAmount || !selectedCurrency) return;
+    if (!depositAmount) return;
 
     setIsLoading(true);
-    
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    const amount = parseFloat(depositAmount);
-    const newBalance = balance + amount;
-    
-    // Create transaction record
-    const newTransaction: Transaction = {
-      id: Math.random().toString(36).substr(2, 9),
-      type: 'deposit',
-      amount,
-      currency: selectedCurrency,
-      status: 'completed',
-      timestamp: new Date().toISOString(),
-      description: `Deposit ${selectedCurrency.toUpperCase()}`
-    };
 
-    const updatedTransactions = [newTransaction, ...transactions];
-    
-    setBalance(newBalance);
-    setTransactions(updatedTransactions);
-    
-    // Save to localStorage
-    localStorage.setItem('unserver_wallet_balance', newBalance.toString());
-    localStorage.setItem('unserver_transactions', JSON.stringify(updatedTransactions));
-    
-    setDepositAmount('');
-    setSelectedCurrency('');
-    setWalletAddress('');
+    const amount = parseFloat(depositAmount);
+    const description = selectedCurrency ? `Deposit ${selectedCurrency.toUpperCase()}` : 'Manual deposit';
+
+    const result = await addFunds(amount, description);
+
+    if (result.success) {
+      setDepositAmount('');
+      setSelectedCurrency('');
+      setWalletAddress('');
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+
+      // Force reload wallet data to update balance in navbar
+      setTimeout(() => {
+        loadWallet();
+      }, 500);
+    } else {
+      console.error('Deposit failed:', result.error);
+    }
+
     setIsLoading(false);
-    setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 3000);
   };
 
   const copyToClipboard = (text: string) => {
@@ -129,7 +110,7 @@ export default function Wallet() {
     >
       {/* Wallet Overview */}
       <motion.div variants={fadeInUp}>
-        <h1 className="text-2xl font-medium text-white mb-6">Wallet Management</h1>
+        <h1 className="text-2xl font-medium text-white mb-6">Billing & Payments</h1>
         <Card className="bg-white/5 border-white/10 backdrop-blur-sm">
           <CardContent className="p-8">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -243,10 +224,10 @@ export default function Wallet() {
 
             <Button
               onClick={handleDeposit}
-              disabled={isLoading || !depositAmount || !selectedCurrency}
+              disabled={isLoading || !depositAmount}
               className="w-full bg-gradient-to-r from-[#3B82F6] to-[#1D4ED8] hover:from-[#2563EB] hover:to-[#1E40AF] text-white font-medium h-12 rounded-xl"
             >
-              {isLoading ? 'Processing...' : 'Confirm Deposit'}
+              {isLoading ? 'Processing...' : 'Add Funds (Demo)'}
             </Button>
           </CardContent>
         </Card>
@@ -271,17 +252,20 @@ export default function Wallet() {
                   <div key={transaction.id} className="flex items-center justify-between p-4 bg-white/5 rounded-xl">
                     <div className="flex items-center space-x-4">
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                        transaction.type === 'deposit' ? 'bg-green-500/20' : 'bg-red-500/20'
+                        transaction.type === 'deposit' ? 'bg-green-500/20' :
+                        transaction.type === 'server_payment' ? 'bg-blue-500/20' : 'bg-red-500/20'
                       }`}>
-                        {transaction.type === 'deposit' ? 
-                          <FaArrowDown className="h-5 w-5 text-green-400" /> : 
+                        {transaction.type === 'deposit' ?
+                          <FaArrowDown className="h-5 w-5 text-green-400" /> :
+                          transaction.type === 'server_payment' ?
+                          <FaServer className="h-5 w-5 text-blue-400" /> :
                           <FaArrowUp className="h-5 w-5 text-red-400" />
                         }
                       </div>
                       <div>
                         <p className="text-white font-normal">{transaction.description}</p>
                         <p className="text-white/60 text-sm">
-                          {new Date(transaction.timestamp).toLocaleDateString()}
+                          {new Date(transaction.created_at).toLocaleDateString()}
                         </p>
                       </div>
                     </div>
@@ -289,12 +273,12 @@ export default function Wallet() {
                       <p className={`font-normal ${
                         transaction.type === 'deposit' ? 'text-green-400' : 'text-red-400'
                       }`}>
-                        {transaction.type === 'deposit' ? '+' : '-'}${transaction.amount.toFixed(2)}
+                        {transaction.type === 'deposit' ? '+' : '-'}${parseFloat(transaction.amount).toFixed(2)}
                       </p>
                       <Badge variant="secondary" className={`${
-                        transaction.status === 'completed' ? 'bg-white/10 text-white' :
-                        transaction.status === 'pending' ? 'bg-white/10 text-white' :
-                        'bg-white/10 text-white'
+                        transaction.status === 'completed' ? 'bg-green-500/20 text-green-200' :
+                        transaction.status === 'pending' ? 'bg-yellow-500/20 text-yellow-200' :
+                        'bg-red-500/20 text-red-200'
                       }`}>
                         {transaction.status}
                       </Badge>

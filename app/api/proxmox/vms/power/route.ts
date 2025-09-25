@@ -116,9 +116,15 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: false, error: "serverId and valid action (start|stop|reboot) are required" }, { status: 400 });
   }
 
-  // Load server owned by this user
-  // Use server-role client for DB access
-  const supabase = createServerSupabase();
+  // Use service role key for database operations
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    return Response.json({ ok: false, error: 'Server configuration error' }, { status: 500 });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
   const { data: server, error: serverErr } = await supabase
     .from('servers')
     .select('id, vmid, node, location')
