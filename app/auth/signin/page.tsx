@@ -9,6 +9,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { supabase } from '@/lib/supabase';
+import { InlineLoader } from '@/components/ui/loader';
+import toast from 'react-hot-toast';
 import LightRays from '@/components/LightRays';
 import { FaEnvelope, FaLock, FaEye, FaEyeSlash, FaArrowLeft, FaShieldAlt } from 'react-icons/fa';
 
@@ -32,7 +34,9 @@ export default function SignIn() {
 
     if (error) {
       setMessage(error.message);
+      toast.error(error.message);
     } else {
+      toast.success('Welcome back!');
       router.push('/');
     }
     setIsLoading(false);
@@ -189,14 +193,7 @@ export default function SignIn() {
                     disabled={isLoading}
                     className="w-full bg-gradient-to-r from-[#60A5FA] to-[#3B82F6] hover:from-[#3B82F6] hover:to-[#1D4ED8] text-white font-normal h-14 text-lg rounded-xl shadow-lg hover:shadow-[#60A5FA]/25 transition-all duration-300"
                   >
-                    {isLoading ? (
-                      <div className="flex items-center space-x-2">
-                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                        <span>Signing in...</span>
-                      </div>
-                    ) : (
-                      'Sign In'
-                    )}
+                    {isLoading ? <InlineLoader text="Signing in" /> : 'Sign In'}
                   </Button>
 
                   <div className="text-center space-y-4 pt-6 border-t border-white/10">

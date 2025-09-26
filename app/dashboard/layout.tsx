@@ -4,7 +4,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { useAuthToken } from '@/hooks/useAuthToken';
 import { useWallet } from '@/hooks/useWallet';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
+import { Loader } from '@/components/ui/loader';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import {
@@ -53,7 +54,7 @@ const bottomNavItems = [
   },
 ];
 
-export default function DashboardLayout({
+function DashboardContent({
   children,
 }: {
   children: React.ReactNode;
@@ -496,7 +497,7 @@ export default function DashboardLayout({
               <div className="flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/10 rounded-lg">
                 <FaWallet className="h-4 w-4 text-[#60A5FA]" />
                 <span className="text-white text-sm font-medium" key={`balance-${balance}`}>
-                  {walletLoading ? '...' : `$${balance.toFixed(2)}`}
+                  {walletLoading ? <Loader size="sm" color="white" /> : `$${balance.toFixed(2)}`}
                 </span>
               </div>
               <div className="hidden lg:flex items-center space-x-2" />
@@ -518,5 +519,21 @@ export default function DashboardLayout({
         />
       )}
     </div>
+  );
+}
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-[#60A5FA]/30 border-t-[#60A5FA] rounded-full animate-spin"></div>
+      </div>
+    }>
+      <DashboardContent>{children}</DashboardContent>
+    </Suspense>
   );
 }

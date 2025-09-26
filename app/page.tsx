@@ -24,14 +24,14 @@ export default function Home() {
 
   const regionCoords = useMemo(() => ({
     // India marker moved south (Mumbai area)
-    india: { lat: 19.0760, lng: 72.8777 },
-    singapore: { lat: 1.3521, lng: 103.8198 },
-    uk: { lat: 51.5074, lng: -0.1278 },
+    india: { lat: -5.0760, lng: 75.8777 },
+    singapore: { lat: -20.3521, lng: 103.8198 },
+    uk: { lat: 45.5074, lng: -0.1278 },
     // Sydney moved slightly lower (further south)
-    sydney: { lat: -36.0000, lng: 151.2093 },
-    germany: { lat: 50.1109, lng: 8.6821 },
-    france: { lat: 48.8566, lng: 2.3522 },
-    poland: { lat: 52.2297, lng: 21.0122 },
+    sydney: { lat: -50.0000, lng: 151.2093 },
+    germany: { lat: 40.1109, lng: 8.6821 },
+    france: { lat: 29.8566, lng: -2.3522 },
+    poland: { lat: 42.2297, lng: 21.0122 },
     us_east: { lat: 39.0438, lng: -77.4874 },
     us_west: { lat: 34.0522, lng: -118.2437 },
     canada: { lat: 43.6532, lng: -79.3832 },
@@ -96,9 +96,9 @@ export default function Home() {
           </div>
 
           <h1 className="text-4xl sm:text-5xl md:text-6xl font-semibold tracking-tight text-white">
-            The Crypto Cloud for Builders
+            Cloud Infrastructure
             <span className="block text-transparent bg-clip-text bg-gradient-to-r from-[#60A5FA] via-[#3B82F6] to-[#22d3ee]">
-              Anonymous VPS in Seconds
+              Servers in Seconds
             </span>
           </h1>
 

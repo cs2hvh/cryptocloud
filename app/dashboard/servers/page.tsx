@@ -11,11 +11,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { FaServer, FaSync, FaCopy, FaPowerOff, FaPlay, FaRedo, FaCheck, FaChevronLeft, FaChevronRight, FaMapMarkerAlt, FaMicrochip, FaHdd, FaMemory, FaInfoCircle, FaCheckCircle, FaExternalLinkAlt, FaThumbsUp, FaWallet, FaExclamationTriangle } from "react-icons/fa";
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import Sparkline from "@/components/ui/sparkline";
 import { calculateHourlyCost, calculateMonthlyCost, formatCurrency, canAffordServer, getEstimatedRuntime, type ServerSpecs } from "@/lib/pricing";
+import { Loader, InlineLoader } from "@/components/ui/loader";
+import { useConfirmation } from "@/components/ui/confirmation-dialog";
+import toast from "react-hot-toast";
 
 type Option = { id: string; name?: string; host?: string; ip?: string; mac?: string | null; location?: string };
 
@@ -29,6 +32,8 @@ export default function ServersPage() {
   const { user } = useAuth();
   const { balance, loading: walletLoading } = useWallet();
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const { confirm, ConfirmationDialog } = useConfirmation();
 
   // Options + view
   const [loading, setLoading] = useState(true);
@@ -53,10 +58,8 @@ export default function ServersPage() {
   const [myServers, setMyServers] = useState<any[]>([]);
   const [myLoading, setMyLoading] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
-  const [copiedIp, setCopiedIp] = useState<string | null>(null);
   const [openMonitorId, setOpenMonitorId] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Record<string, { t: number; cpu: number | null; memUsed: number | null; netIn: number | null; netOut: number | null }[]>>({});
-  const [confirm, setConfirm] = useState<{ id: string; name?: string; action: 'reboot'|'stop' } | null>(null);
 
   // View selection from sidebar
   useEffect(() => {
@@ -99,6 +102,13 @@ export default function ServersPage() {
 
   useEffect(() => { loadMyServers(); }, [user?.id]);
 
+  // Auto-refresh when switching to list view
+  useEffect(() => {
+    if (activeTab === "list" && user?.id) {
+      loadMyServers();
+    }
+  }, [activeTab, user?.id]);
+
   const stepsValid = [
     hostname.trim().length > 0,
     !!location,
@@ -137,6 +147,16 @@ export default function ServersPage() {
       }
       if (!res.ok || !json.ok) throw new Error(json.error || "Provisioning failed");
       setResult(json);
+
+      // Show success toast and redirect to server list
+      toast.success(`Server "${hostname}" deployed successfully!`);
+      await loadMyServers(); // Refresh server list
+
+      // Wait a moment for toast to show, then redirect
+      setTimeout(() => {
+        router.push('/dashboard/servers?view=list');
+      }, 1500);
+
     } catch (err: any) { setError(err?.message || "Provisioning failed"); }
     finally { setSubmitLoading(false); }
   };
@@ -164,11 +184,23 @@ export default function ServersPage() {
   };
 
   const confirmAndPower = (server: any, action: "reboot" | "stop") => {
-    setConfirm({ id: server.id, name: server.name, action });
+    confirm({
+      title: `Confirm ${action === 'reboot' ? 'Reboot' : 'Power Off'}`,
+      message: `Are you sure you want to ${action === 'reboot' ? 'reboot' : 'power off'} ${server.name || 'this VM'}? This may cause temporary downtime.`,
+      confirmText: action === 'reboot' ? 'Reboot' : 'Power Off',
+      variant: action === 'reboot' ? 'warning' : 'danger',
+      onConfirm: () => powerAction(server.id, action)
+    });
   };
 
   const copyIp = async (ip?: string) => {
-    if (!ip) return; try { await navigator.clipboard.writeText(ip); setCopiedIp(ip); setTimeout(()=>setCopiedIp(null), 1200); } catch {}
+    if (!ip) return;
+    try {
+      await navigator.clipboard.writeText(ip);
+      toast.success(`IP ${ip} copied to clipboard`);
+    } catch {
+      toast.error('Failed to copy IP address');
+    }
   };
 
   const loadMetrics = async (serverId: string) => {
@@ -332,7 +364,7 @@ export default function ServersPage() {
                   {step < 4 ? (
                     <Button type="button" onClick={() => stepsValid[step] && setStep((s) => Math.min(4, s + 1))} disabled={!stepsValid[step]} className="bg-white/10 hover:bg-white/20 text-white border border-white/10 disabled:opacity-50">Next <FaChevronRight className="ml-2" /></Button>
                   ) : (
-                    <Button type="button" onClick={deployNow} disabled={submitDisabled} className="bg-white/10 hover:bg-white/20 text-white border border-white/10 disabled:opacity-50">{submitLoading ? "Provisioning..." : "Deploy Instance"}</Button>
+                    <Button type="button" onClick={deployNow} disabled={submitDisabled} className="bg-white/10 hover:bg-white/20 text-white border border-white/10 disabled:opacity-50">{submitLoading ? <InlineLoader text="Provisioning" /> : "Deploy Instance"}</Button>
                   )}
                 </div>
               </CardContent>
@@ -359,7 +391,7 @@ export default function ServersPage() {
                       <FaWallet /> Wallet Balance
                     </div>
                     <div className="text-white text-sm">
-                      {walletLoading ? '...' : formatCurrency(balance)}
+                      {walletLoading ? <Loader size="sm" /> : formatCurrency(balance)}
                     </div>
                   </div>
                   {!canAfford && (
@@ -382,7 +414,7 @@ export default function ServersPage() {
                   <div className="text-white/40 text-[11px] mt-1">Initial charge: {formatCurrency(pricing.hourly)} (1 hour minimum)</div>
                 </div>
                 {step === 4 && (<div className="space-y-2"><div className="flex items-center justify-between text-white/70"><span className="flex items-center gap-2"><FaInfoCircle /> Password Strength</span><span>{passwordStrength}%</span></div><div className="h-1.5 w-full bg-white/10 rounded"><div className="h-1.5 rounded bg-gradient-to-r from-emerald-400 to-green-300" style={{ width: `${passwordStrength}%` }} /></div></div>)}
-                <div><Button onClick={deployNow} disabled={submitDisabled} className="w-full bg-white/10 hover:bg-white/20 text-white border border-white/10 disabled:opacity-50">{submitLoading ? "Provisioning..." : "Deploy Instance"}</Button></div>
+                <div><Button onClick={deployNow} disabled={submitDisabled} className="w-full bg-white/10 hover:bg-white/20 text-white border border-white/10 disabled:opacity-50">{submitLoading ? <InlineLoader text="Provisioning" /> : "Deploy Instance"}</Button></div>
               </CardContent>
             </Card>
           </div>
@@ -415,7 +447,7 @@ export default function ServersPage() {
             </div>
           </CardHeader>
           <CardContent>
-            {myLoading ? (<div className="text-white/60">Loading...</div>) : myServers.length === 0 ? (<div className="text-white/60">No servers yet.</div>) : (
+            {myLoading ? (<div className="flex justify-center py-8"><InlineLoader text="Loading servers" /></div>) : myServers.length === 0 ? (<div className="text-white/60">No servers yet.</div>) : (
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead>
@@ -445,7 +477,6 @@ export default function ServersPage() {
                               <div className="inline-flex items-center gap-2">
                                 <span>{s.ip}</span>
                                 <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-white/70 hover:text-white" title="Copy IP" onClick={() => copyIp(s.ip)}><FaCopy className="h-3.5 w-3.5" /></Button>
-                                {copiedIp === s.ip && <span className="text-xs text-white/50">Copied</span>}
                               </div>
                             </td>
                             <td className="py-2 pr-4 text-white/80">{specStr}</td>
@@ -453,7 +484,14 @@ export default function ServersPage() {
                             <td className="py-2 pr-4 text-white/80">{s.vmid}</td>
                             <td className="py-2 pr-4 text-white/80">{s.status || 'N/A'}</td>
                             <td className="py-2 pr-4 space-x-2 whitespace-nowrap">
-                              <Button type="button" size="sm" variant="ghost" className="text-white/80 hover:text-white" title="Copy SSH command" onClick={() => navigator.clipboard.writeText(sshCmd)}><FaCopy className="h-3.5 w-3.5 mr-2" /> SSH</Button>
+                              <Button type="button" size="sm" variant="ghost" className="text-white/80 hover:text-white" title="Copy SSH command" onClick={() => {
+                                try {
+                                  navigator.clipboard.writeText(sshCmd);
+                                  toast.success('SSH command copied to clipboard');
+                                } catch {
+                                  toast.error('Failed to copy SSH command');
+                                }
+                              }}><FaCopy className="h-3.5 w-3.5 mr-2" /> SSH</Button>
                               {stopped ? (
                                 <Button type="button" size="sm" className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40" onClick={() => powerAction(s.id, 'start')} disabled={actingId === s.id} title="Start VM"><FaPlay className="h-3.5 w-3.5 mr-2" /> Start</Button>
                               ) : (
@@ -491,20 +529,7 @@ export default function ServersPage() {
           </CardContent>
         </Card>
       )}
-      {confirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-lg border border-white/10 bg-neutral-900 p-5 text-white shadow-xl">
-            <h3 className="text-lg font-semibold mb-2">Confirm {confirm.action === 'reboot' ? 'Reboot' : 'Power Off'}</h3>
-            <p className="text-white/70 mb-4">Are you sure you want to {confirm.action === 'reboot' ? 'reboot' : 'power off'} <span className="font-medium">{confirm.name || 'this VM'}</span>? This may cause temporary downtime.</p>
-            <div className="flex justify-end gap-2">
-              <Button onClick={() => setConfirm(null)} variant="ghost" className="text-white/80 hover:text-white">Cancel</Button>
-              <Button onClick={async()=>{ const c=confirm; setConfirm(null); await powerAction(c.id, c.action); }} className={confirm.action==='reboot' ? 'bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-200 border border-yellow-500/40' : 'bg-red-500/20 hover:bg-red-500/30 text-red-200 border border-red-500/40'}>
-                Confirm
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmationDialog />
     </motion.div>
   );
 }
