@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -9,6 +11,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { useWallet } from '@/hooks/useWallet';
+import { Loader2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import {
   FaWallet,
   FaPlus,
@@ -24,6 +28,8 @@ import {
   FaBolt,
   FaServer
 } from 'react-icons/fa';
+import { Currency } from '@/lib/nowpayments';
+import { supabase } from '@/lib/supabase';
 
 interface Transaction {
   id: string;
@@ -36,49 +42,96 @@ interface Transaction {
 }
 
 export default function Wallet() {
+  const router = useRouter();
   const { balance, transactions, loading, addFunds, loadWallet } = useWallet();
+  const [currencies, setCurrencies] = useState<Currency[]>([])
   const [depositAmount, setDepositAmount] = useState('');
   const [selectedCurrency, setSelectedCurrency] = useState('');
+  const [loadingCurrencies, setLoadingCurrencies] = useState(true)
   const [isLoading, setIsLoading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [walletAddress, setWalletAddress] = useState('');
 
-  const generateWalletAddress = (currency: string) => {
-    const addresses = {
-      btc: '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa',
-      eth: '0x742d35Cc6634C0532925a3b8D4C2C4e4C4C4',
-      xmr: '4AdUndXHHZ6cfufTMvppY6JwXNouMBzSkbLYfpAV5Usx3skxNgYeYTRJ5zQetzFS1jqhkTSMVa4QVVgRYQqQQDNuQhsmPWW',
-      ltc: 'LTC1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4'
-    };
-    return addresses[currency as keyof typeof addresses] || '';
-  };
+  useEffect(() => {
+    loadCurrencies()
+  }, [])
+
+  const loadCurrencies = async () => {
+    setLoadingCurrencies(true)
+    try {
+      const response = await fetch('/api/crypto/currencies')
+      const data = await response.json()
+
+      if (data.success) {
+        setCurrencies(data.currencies)
+      } else {
+        console.error('Failed to load supported currencies')
+      }
+    } catch {
+      console.error('Failed to load supported currencies')
+    } finally {
+      setLoadingCurrencies(false)
+    }
+  }
+
+  // Featured currencies to display as buttons
+  const featuredCurrencyCodes = ['btc', 'eth', 'usdttrc20', 'xmr'];
+  const featuredCurrencies = currencies.filter(c =>
+    featuredCurrencyCodes.includes(c.code.toLowerCase())
+  );
+  const otherCurrencies = currencies.filter(c =>
+    !featuredCurrencyCodes.includes(c.code.toLowerCase())
+  );
 
   const handleDeposit = async () => {
-    if (!depositAmount) return;
+    if (!depositAmount || !selectedCurrency) return;
 
     setIsLoading(true);
 
-    const amount = parseFloat(depositAmount);
-    const description = selectedCurrency ? `Deposit ${selectedCurrency.toUpperCase()}` : 'Manual deposit';
+    try {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
-    const result = await addFunds(amount, description);
+      if (sessionError) {
+        console.error('Session error:', sessionError);
+        return;
+      }
 
-    if (result.success) {
-      setDepositAmount('');
-      setSelectedCurrency('');
-      setWalletAddress('');
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 3000);
+      const accessToken = sessionData?.session?.access_token;
 
-      // Force reload wallet data to update balance in navbar
+      if (!accessToken) {
+        console.error('No access token available');
+        return;
+      }
+
+      const numAmount = parseFloat(depositAmount);
+
+      const response = await fetch('/api/crypto/create', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: numAmount,
+          currency: selectedCurrency
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to create payment');
+      }
       setTimeout(() => {
-        loadWallet();
-      }, 500);
-    } else {
-      console.error('Deposit failed:', result.error);
-    }
+        router.push(`/payments/${data.payment_id}`);
+      }, 2000);
 
-    setIsLoading(false);
+    } catch (error) {
+      console.error('Deposit failed:', error);
+      setShowSuccess(false);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const copyToClipboard = (text: string) => {
@@ -124,7 +177,7 @@ export default function Wallet() {
                   <div className="text-white/50 text-sm">USD Equivalent</div>
                 </div>
               </div>
-              
+
               <div className="grid grid-cols-3 gap-4">
                 <div className="bg-white/5 border border-white/10 p-4 text-center rounded-xl">
                   <FaDollarSign className="h-6 w-6 text-white mx-auto mb-2" />
@@ -161,74 +214,126 @@ export default function Wallet() {
             </CardDescription>
           </CardHeader>
           <CardContent className="p-6 space-y-6">
-            <div>
-              <Label className="text-white font-medium mb-3 block">Currency</Label>
-              <Select value={selectedCurrency} onValueChange={(value) => {
-                setSelectedCurrency(value);
-                setWalletAddress(generateWalletAddress(value));
-              }}>
-                <SelectTrigger className="bg-white/5 border-white/10 text-white h-10">
-                  <SelectValue placeholder="Select cryptocurrency" />
-                </SelectTrigger>
-                <SelectContent className="bg-black/90 border-white/10">
-                  <SelectItem value="btc" className="text-white hover:bg-white/10">
-                    <div className="flex items-center space-x-2">
-                      <FaBitcoin className="h-4 w-4 text-orange-400" />
-                      <span>Bitcoin (BTC)</span>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="eth" className="text-white hover:bg-white/10">
-                    <div className="flex items-center space-x-2">
-                      <FaEthereum className="h-4 w-4 text-blue-400" />
-                      <span>Ethereum (ETH)</span>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="xmr" className="text-white hover:bg-white/10">
-                    <div className="flex items-center space-x-2">
-                      <FaCoins className="h-4 w-4 text-orange-500" />
-                      <span>Monero (XMR)</span>
-                    </div>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label className="text-white font-medium mb-3 block">Amount (USD)</Label>
-              <Input
-                type="number"
-                placeholder="100.00"
-                value={depositAmount}
-                onChange={(e) => setDepositAmount(e.target.value)}
-                className="bg-white/5 border-white/10 text-white h-10"
-              />
-            </div>
-
-            {walletAddress && (
-              <div>
-                <Label className="text-white font-normal text-lg mb-3 block">Deposit Address</Label>
-                <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                  <div className="flex items-center justify-between">
-                    <code className="text-[#3B82F6] text-sm break-all flex-1 mr-2">{walletAddress}</code>
-                    <button
-                      onClick={() => copyToClipboard(walletAddress)}
-                      className="text-white/60 hover:text-white transition-colors"
-                    >
-                      <FaCopy className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-                <p className="text-white/60 text-sm mt-2">Send {selectedCurrency.toUpperCase()} to this address</p>
+            {loadingCurrencies ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-white" />
               </div>
-            )}
+            ) : (
+              <>
+                <div>
+                  <Label className="text-white font-medium mb-3 block">Amount (USD)</Label>
+                  <Input
+                    type="number"
+                    placeholder="100.00"
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(e.target.value)}
+                    min="20"
+                    step="0.01"
+                    disabled={isLoading}
+                    className="bg-white/5 border-white/10 text-white h-10"
+                  />
+                  <p className="text-xs text-white/60 mt-2">
+                    Minimum: $20.00
+                  </p>
+                </div>
 
-            <Button
-              onClick={handleDeposit}
-              disabled={isLoading || !depositAmount}
-              className="w-full bg-gradient-to-r from-[#3B82F6] to-[#1D4ED8] hover:from-[#2563EB] hover:to-[#1E40AF] text-white font-medium h-12 rounded-xl"
-            >
-              {isLoading ? 'Processing...' : 'Add Funds (Demo)'}
-            </Button>
+                <div className="space-y-3">
+                  <Label className="text-white font-medium">Select Cryptocurrency</Label>
+
+                  {/* Featured Currency Buttons */}
+                  {featuredCurrencies.length > 0 && (
+                    <div className="grid grid-cols-2 gap-2">
+                      {featuredCurrencies.map((currency) => (
+                        <Button
+                          key={currency.id}
+                          type="button"
+                          variant="outline"
+                          className={cn(
+                            "h-16 p-3 flex items-center gap-3 transition-all bg-white/5 border-white/10 text-white hover:bg-white/10",
+                            selectedCurrency === currency.code.toLowerCase()
+                              ? "border-primary bg-primary/10 ring-1 ring-primary"
+                              : "hover:border-primary/50"
+                          )}
+                          onClick={() => setSelectedCurrency(
+                            selectedCurrency === currency.code.toLowerCase()
+                              ? ''
+                              : currency.code.toLowerCase()
+                          )}
+                          disabled={isLoading}
+                        >
+                          {currency.logo_url && (
+                            <Image
+                              src={`https://nowpayments.io${currency.logo_url}`}
+                              alt={currency.name}
+                              width={24}
+                              height={24}
+                              className="rounded-full flex-shrink-0"
+                            />
+                          )}
+                          <div className="text-left flex-1 min-w-0">
+                            <div className="font-medium text-sm truncate">{currency.name}</div>
+                            <div className="text-xs text-white/60">{currency.code}</div>
+                          </div>
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Other Currencies Select */}
+                  {otherCurrencies.length > 0 && (
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium text-white">Other Currencies</Label>
+                      <Select
+                        value={featuredCurrencyCodes.includes(selectedCurrency) ? "" : selectedCurrency}
+                        onValueChange={(value) => setSelectedCurrency(value)}
+                      >
+                        <SelectTrigger className={cn(
+                          "bg-white/5 border-white/10 text-white",
+                          selectedCurrency && !featuredCurrencyCodes.includes(selectedCurrency)
+                            ? "border-primary ring-1 ring-primary"
+                            : ""
+                        )}>
+                          <SelectValue placeholder="Select another cryptocurrency" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-black/90 border-white/10">
+                          {otherCurrencies.map((currency) => (
+                            <SelectItem
+                              key={currency.id}
+                              value={currency.code.toLowerCase()}
+                              className="text-white hover:bg-white/10"
+                            >
+                              <div className="flex items-center gap-2">
+                                {currency.logo_url && (
+                                  <Image
+                                    src={`https://nowpayments.io${currency.logo_url}`}
+                                    alt={currency.name}
+                                    width={16}
+                                    height={16}
+                                    className="rounded-full"
+                                  />
+                                )}
+                                <span>{currency.name}</span>
+                                <span className="text-white/60">
+                                  ({currency.code})
+                                </span>
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+
+                <Button
+                  onClick={handleDeposit}
+                  disabled={isLoading || !depositAmount || !selectedCurrency}
+                  className="w-full bg-gradient-to-r from-[#3B82F6] to-[#1D4ED8] hover:from-[#2563EB] hover:to-[#1E40AF] text-white font-medium h-12 rounded-xl"
+                >
+                  {isLoading ? 'Processing...' : 'Add Funds'}
+                </Button>
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -251,15 +356,14 @@ export default function Wallet() {
                 {transactions.slice(0, 5).map((transaction) => (
                   <div key={transaction.id} className="flex items-center justify-between p-4 bg-white/5 rounded-xl">
                     <div className="flex items-center space-x-4">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                        transaction.type === 'deposit' ? 'bg-green-500/20' :
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${transaction.type === 'deposit' ? 'bg-green-500/20' :
                         transaction.type === 'server_payment' ? 'bg-blue-500/20' : 'bg-red-500/20'
-                      }`}>
+                        }`}>
                         {transaction.type === 'deposit' ?
                           <FaArrowDown className="h-5 w-5 text-green-400" /> :
                           transaction.type === 'server_payment' ?
-                          <FaServer className="h-5 w-5 text-blue-400" /> :
-                          <FaArrowUp className="h-5 w-5 text-red-400" />
+                            <FaServer className="h-5 w-5 text-blue-400" /> :
+                            <FaArrowUp className="h-5 w-5 text-red-400" />
                         }
                       </div>
                       <div>
@@ -270,16 +374,14 @@ export default function Wallet() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className={`font-normal ${
-                        transaction.type === 'deposit' ? 'text-green-400' : 'text-red-400'
-                      }`}>
+                      <p className={`font-normal ${transaction.type === 'deposit' ? 'text-green-400' : 'text-red-400'
+                        }`}>
                         {transaction.type === 'deposit' ? '+' : '-'}${parseFloat(transaction.amount).toFixed(2)}
                       </p>
-                      <Badge variant="secondary" className={`${
-                        transaction.status === 'completed' ? 'bg-green-500/20 text-green-200' :
+                      <Badge variant="secondary" className={`${transaction.status === 'completed' ? 'bg-green-500/20 text-green-200' :
                         transaction.status === 'pending' ? 'bg-yellow-500/20 text-yellow-200' :
-                        'bg-red-500/20 text-red-200'
-                      }`}>
+                          'bg-red-500/20 text-red-200'
+                        }`}>
                         {transaction.status}
                       </Badge>
                     </div>
